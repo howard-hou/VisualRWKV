@@ -1,0 +1,8 @@
+# --------- pytorch --------- #
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.29.1
+
+# --------- others --------- #
+ninja           # for faster build
+sentencepiece   # for tokenization
