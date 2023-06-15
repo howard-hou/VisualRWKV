@@ -12,7 +12,9 @@ ______________________________________________________________________
 
 ## Description
 
-VisualRWKV is the visual-enhanced version of the [RWKV language model](https://github.com/BlinkDL/RWKV-LM), enabling RWKV to handle various visual tasks.
+VisualRWKV is the visual-enhanced version of the [RWKV language model](https://github.com/BlinkDL/RWKV-LM), enabling RWKV to handle various visual tasks. 
+
+By utilizing a loosely coupled adapter design, visual capabilities can be effortlessly enhanced while preserving the performance of the RWKV language model. This approach allows for easy integration and interchangeability without compromising the core functionality of RWKV.
 
 ## Usage
 ### Installation
@@ -31,6 +33,7 @@ pip install -r requirements.txt
 ### Download Checkpoint
 
 RWKV models are here, RWKV-4 169M:
+
 https://huggingface.co/BlinkDL/rwkv-4-pile-169m/blob/main/RWKV-4-Pile-169M-20220807-8023.pth
 
 Visual Adapter model:
