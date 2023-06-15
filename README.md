@@ -10,7 +10,7 @@ ______________________________________________________________________
 
 ## Description
 
-VisualRWKV is the visual-enhanced version of the RWKV language model, enabling RWKV to handle various visual tasks.
+VisualRWKV is the visual-enhanced version of the [RWKV language model](https://github.com/BlinkDL/RWKV-LM), enabling RWKV to handle various visual tasks.
 
 ## Usage
 ### Installation
