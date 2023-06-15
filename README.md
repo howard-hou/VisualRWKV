@@ -36,8 +36,9 @@ RWKV models are here, RWKV-4 169M:
 
 https://huggingface.co/BlinkDL/rwkv-4-pile-169m/blob/main/RWKV-4-Pile-169M-20220807-8023.pth
 
-Visual Adapter model:
-https://huggingface.co/BlinkDL/rwkv-4-pile-169m
+Visual Adapter:
+
+https://huggingface.co/howard-hou/VisualRWKV/blob/main/rwkv169_coco-vg-sbu-cc_t5small_vit224.ckpt
 
 
 ### Example
