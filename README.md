@@ -4,6 +4,8 @@ ______________________________________________________________________
 
 # VisualRWKV
 
+![rwkv logo](rwkv_emoji.png)
+
 <a href="https://pytorch.org/get-started/locally/"><img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-ee4c2c?logo=pytorch&logoColor=white"></a>
 
 </div>
@@ -16,11 +18,11 @@ VisualRWKV is the visual-enhanced version of the [RWKV language model](https://g
 ### Installation
 ```bash
 # clone project
-git clone https://github.com/YourGithubName/your-repo-name
-cd your-repo-name
+git clone https://github.com/howard-hou/VisualRWKV
+cd VisualRWKV
 
 # [OPTIONAL] create conda environment
-conda create -n myenv python=3.9
+conda create -n myenv python=3.10
 conda activate myenv
 
 # install requirements
