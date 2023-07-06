@@ -6,3 +6,4 @@ transformers>=4.29.1
 # --------- others --------- #
 ninja           # for faster build
 sentencepiece   # for tokenization
+omegaconf       # for config

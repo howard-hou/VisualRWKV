@@ -93,23 +93,24 @@ class VisualRWKV(nn.Module):
         return instr_tokens
 
     def process_image(self, image_embs):
-        device = image_embs.device
+        img_device = image_embs.device
+        emb_device = self.model.w["emb.weight"].device
         batch_size = image_embs.shape[0]
         image_embs_llm = self.llm_proj(image_embs)
         # begin of image token id
         boi_token_ids = torch.zeros(
-            batch_size, len(self.boi_token_ids), dtype=torch.long, device=device
+            batch_size, len(self.boi_token_ids), dtype=torch.long, device=emb_device
         )
         for i in range(len(self.boi_token_ids)):
             boi_token_ids[:, i] = self.boi_token_ids[i]
-        boi_embs = self.model.w["emb.weight"][boi_token_ids]
+        boi_embs = self.model.w["emb.weight"][boi_token_ids].to(img_device)
         # end of image token id
         eoi_token_ids = torch.zeros(
-            batch_size, len(self.eoi_token_ids), dtype=torch.long, device=device
+            batch_size, len(self.eoi_token_ids), dtype=torch.long, device=emb_device
         )
         for i in range(len(self.eoi_token_ids)):
             eoi_token_ids[:, i] = self.eoi_token_ids[i]
-        eoi_embs = self.model.w["emb.weight"][eoi_token_ids]
+        eoi_embs = self.model.w["emb.weight"][eoi_token_ids].to(img_device)
         # concatenate
         image_embs_llm = torch.cat([boi_embs, image_embs_llm, eoi_embs], dim=1)
         return image_embs_llm

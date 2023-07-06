@@ -61,14 +61,15 @@ def _load_projection(projection, state_dict):
     return projection
 
 
-def get_model_config(model_name: str, rwkv_path) -> DictConfig:
+def get_model_config(model_name: str, rwkv_path, device) -> DictConfig:
     model_config = OmegaConf.create()
     model_config.adapter = AdapterConfig()
-    # if cuda is available, use cuda
-    if torch.cuda.is_available():
+    if device == "cuda":
         rwkv_strategy = "cuda fp16"
-    else:
+    elif device == "cpu":
         rwkv_strategy = "cpu fp32"
+    else:
+        raise ValueError(f"device {device} not supported")
     model_config.rwkv = RWKVConfig(rwkv_path, rwkv_strategy)
     model_config.visualrwkv = VisualRWKVConfig()
     return model_config
@@ -107,13 +108,22 @@ def build_model(state_dict: dict, model_config):
     return visualrwkv
 
 
-def load(model_name, adapter_path, rwkv_path, use_bf16=False) -> None:
+def print_model_info(model):
+    print("after model loaded: ")
+    # print model dtype and device
+    for name, param in model.named_parameters():
+        print(f"{name}: {param.dtype}, {param.device}")
+
+
+def load(model_name, adapter_path, rwkv_path, device, use_bf16=False) -> None:
     state_dict = torch.load(adapter_path, map_location="cpu")["state_dict"]
-    model_config = get_model_config(model_name, rwkv_path)
+    model_config = get_model_config(model_name, rwkv_path, device)
     model = build_model(state_dict, model_config)
     image_size = MODEL_NAME2IMAGE_SIZE[model_name]
     image_transfrom = _get_image_transform(image_size)
     if use_bf16:
         model.adapter.vit = model.adapter.vit.bfloat16()
+    model = model.to(device)
+    # print_model_info(model)
     model.eval()
     return model, image_transfrom
