@@ -46,3 +46,4 @@ for device in device_list:
     print("output", decoded)
     elapsed_time = (time.time() - start_time) / 100 * 1000  # ms
     print(f"time cost: {elapsed_time} ms per image using {device}")
+    print("-" * 50)
