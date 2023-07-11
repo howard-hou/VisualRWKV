@@ -54,10 +54,10 @@ RWKV models are here, please download LLM and its adapter.
 
 | model | dataset | split | Bleu_1 | Bleu_2 | Bleu_3 | Bleu_4 | METEOR | ROUGE_L | CIDEr | SPICE |
 |-------|-------------------|-------------|--------|--------|--------|--------|--------|---------|-------|-------|
-|RWKV-1b5 raven| coco_caption | test | 0.6911 | 0.5143 | 0.3652 | 0.2542 | 0.2376 | 0.5018  | 0.8658 | 0.1728|
-|RWKV-1b5 raven| nocaps_caption | val | 0.6779 | 0.5027 | 0.3521 | 0.242  | 0.2062 | 0.4639  | 0.5988 | 0.0915|
-|RWKV-4 169M| coco_caption | test | 0.6762 | 0.4957 | 0.3446 | 0.2332 | 0.2202 | 0.488   | 0.768  | 0.1562|
-|RWKV-4 169M| nocaps_caption | val | 0.6561 | 0.4783 | 0.3261 | 0.2142 | 0.1918 | 0.4538  | 0.5184 | 0.0792|
+|RWKV-1b5 raven| coco | test | 0.6911 | 0.5143 | 0.3652 | 0.2542 | 0.2376 | 0.5018  | 0.8658 | 0.1728|
+|RWKV-1b5 raven| nocaps | val | 0.6779 | 0.5027 | 0.3521 | 0.242  | 0.2062 | 0.4639  | 0.5988 | 0.0915|
+|RWKV-4 169M| coco | test | 0.6762 | 0.4957 | 0.3446 | 0.2332 | 0.2202 | 0.488   | 0.768  | 0.1562|
+|RWKV-4 169M| nocaps | val | 0.6561 | 0.4783 | 0.3261 | 0.2142 | 0.1918 | 0.4538  | 0.5184 | 0.0792|
 
 * note: model is trained on coo_caption, so it is not zero-shot; but it is zero-shot on nocaps_caption
 
