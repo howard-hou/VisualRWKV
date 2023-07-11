@@ -47,8 +47,8 @@ RWKV models are here, please download LLM and its adapter.
 
 |model| dataset | split      | overall | other | yes/no | number |
 |-----|---------|------------|---------|-------|--------|--------|
-|RWKV-4 169M| vqav2   | validation | 43.7    | 34.35 | 60.67  | 30.25  |
-|RWKV-1b5 raven| vqav2   | validation | 15.41   | 23.59 | 0.14   | 28.42  |
+|RWKV-1b5 raven| vqav2   | validation | 43.7    | 34.35 | 60.67  | 30.25  |
+|RWKV-4 169M   | vqav2   | validation | 15.41   | 23.59 | 0.14   | 28.42  |
 
 ### Zero-shot Image Captioning
 
