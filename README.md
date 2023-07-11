@@ -32,13 +32,35 @@ pip install -r requirements.txt
 ```
 ### Download Checkpoint
 
-RWKV models are here, RWKV-4 169M:
+RWKV models are here, please download LLM and its adapter.
 
-https://huggingface.co/BlinkDL/rwkv-4-pile-169m/blob/main/RWKV-4-Pile-169M-20220807-8023.pth
+| Model Name         | Link                                                                                                             |
+|-------------------|------------------------------------------------------------------------------------------------------------------|
+| RWKV-4 169M       | [RWKV-4 169M](https://huggingface.co/BlinkDL/rwkv-4-pile-169m/blob/main/RWKV-4-Pile-169M-20220807-8023.pth)       |
+| RWKV-1b5 raven    | [RWKV-1b5 raven](https://huggingface.co/BlinkDL/rwkv-4-raven/resolve/main/RWKV-4-Raven-1B5-v12-Eng98%25-Other2%25-20230520-ctx4096.pth) |
+| Visual Adapter    | [adapted to RWKV-4 169M](https://huggingface.co/howard-hou/VisualRWKV/blob/main/rwkv169_coco-vg-sbu-cc_t5small_vit224.ckpt) |
+| Visual Adapter    | [adapted to RWKV-1b5 raven](https://huggingface.co/howard-hou/VisualRWKV/resolve/main/rwkv1b5raven_coco-vg-sbu-cc_t5small_vit224.ckpt) |
 
-Visual Adapter:
+## Zero-shot Performance
 
-https://huggingface.co/howard-hou/VisualRWKV/blob/main/rwkv169_coco-vg-sbu-cc_t5small_vit224.ckpt
+### Zero-shot Visual Question Answering
+
+|model| dataset | split      | overall | other | yes/no | number |
+|-----|---------|------------|---------|-------|--------|--------|
+|RWKV-4 169M| vqav2   | validation | 43.7    | 34.35 | 60.67  | 30.25  |
+|RWKV-1b5 raven| vqav2   | validation | 15.41   | 23.59 | 0.14   | 28.42  |
+
+### Zero-shot Image Captioning
+
+|model | dataset           | split       | Bleu_1 | Bleu_2 | Bleu_3 | Bleu_4 | METEOR | ROUGE_L | CIDEr | SPICE |
+|------|-------------------|-------------|--------|--------|--------|--------|--------|---------|-------|-------|
+|RWKV-1b5 raven| coco_caption     | test        | 0.6911 | 0.5143 | 0.3652 | 0.2542 | 0.2376 | 0.5018  | 0.8658 | 0.1728|
+|RWKV-1b5 raven| nocaps_caption   | validation | 0.6779 | 0.5027 | 0.3521 | 0.242  | 0.2062 | 0.4639  | 0.5988 | 0.0915|
+|RWKV-4 169M| coco_caption    | test        | 0.6762 | 0.4957 | 0.3446 | 0.2332 | 0.2202 | 0.488   | 0.768  | 0.1562|
+|RWKV-4 169M| nocaps_caption    | validation | 0.6561 | 0.4783 | 0.3261 | 0.2142 | 0.1918 | 0.4538  | 0.5184 | 0.0792|
+
+* note: model is trained on coo_caption, so it is not zero-shot; but it is zero-shot on nocaps_caption
+
 
 
 ### Example
