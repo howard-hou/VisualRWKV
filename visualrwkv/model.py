@@ -25,10 +25,12 @@ class VisualRWKV(nn.Module):
         # config tokenizer
         if "world" in model_name:
             self.tokenizer = WorldTokenizer("rwkv_vocab_v20230424.txt")
+            print("Using tokenizer: ", self.tokenizer)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.tokenizer.pad_token = "<|padding|>"
             self.tokenizer.bos_token = self.tokenizer.eos_token
+            print("Using tokenizer: ", self.tokenizer)
         # begin of image token and end of image token
         self.boi_token_ids = self.tokenizer("image:").input_ids
         self.eoi_token_ids = self.tokenizer("\n").input_ids
