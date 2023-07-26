@@ -15,6 +15,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter_path", type=str, default=None)
     parser.add_argument("--rwkv_path", type=str, default=None)
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        choices=["VisualRWKV-small", "VisualRWKV-world-7b"],
+        default="VisualRWKV-small",
+    )
     args = parser.parse_args()
     return args
 
@@ -26,7 +32,7 @@ for device in device_list:
     print(f"now testing in {device}")
 
     model, preprocess = visualrwkv.load(
-        model_name="VisualRWKV-small",
+        model_name=args.model_name,
         adapter_path=args.adapter_path,
         rwkv_path=args.rwkv_path,
         device=device,
