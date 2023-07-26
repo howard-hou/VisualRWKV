@@ -28,7 +28,14 @@ def parse_args():
 
 args = parse_args()
 device_list = ["cpu"] if not torch.cuda.is_available() else ["cpu", "cuda"]
-image_list = list(Path("images").glob("*"))
+# glob png or jpeg images
+
+caption_image_list = sorted(Path("images/caption").glob("*.png")) + sorted(
+    Path("images/caption").glob("*.jpeg")
+)
+vqa_image_list = sorted(Path("images/vqa").glob("*.png")) + sorted(
+    Path("images/vqa").glob("*.jpeg")
+)
 
 for device in device_list:
     print(f"now testing in {device}")
@@ -43,7 +50,7 @@ for device in device_list:
     instruction = ["describe the image."]
     max_new_tokens = 20  # use to control the length of the generated text
     start_time = time.time()
-    for image_path in image_list:
+    for image_path in caption_image_list:
         image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
         image_embs = model.adapter.forward_task_embs(image)
         outputs = model.generate(
@@ -51,7 +58,18 @@ for device in device_list:
         )
         decoded = model.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         decoded = postprocess_response(decoded)
-        print(f"caption of {image_path.name}: ", decoded)
-    elapsed_time = (time.time() - start_time) / len(image_list) * 1000  # ms
+        print(f"caption of {image_path.name}: ", decoded[0])
+
+    for image_path in vqa_image_list:
+        questoin = image_path.stem
+        image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
+        image_embs = model.adapter.forward_task_embs(image)
+        outputs = model.generate(
+            image_embs, instruction=[questoin], max_new_tokens=max_new_tokens
+        )
+        decoded = model.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        decoded = postprocess_response(decoded)
+        print(f"Question: {questoin} Answer: {decoded[0]}")
+    elapsed_time = (time.time() - start_time) / len(caption_image_list) * 1000  # ms
     print(f"time cost: {elapsed_time} ms per image using {device}")
     print("-" * 50)
