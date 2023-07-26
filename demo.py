@@ -35,7 +35,7 @@ for device in device_list:
     instruction = ["describe the image."]
     max_new_tokens = 20  # use to control the length of the generated text
     start_time = time.time()
-    for _ in range(100):
+    for _ in range(1):
         image = preprocess(Image.open("demo.png")).unsqueeze(0).to(device)
         image_embs = model.adapter.forward_task_embs(image)
         outputs = model.generate(
@@ -44,6 +44,6 @@ for device in device_list:
         decoded = model.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         decoded = postprocess_response(decoded)
     print("output", decoded)
-    elapsed_time = (time.time() - start_time) / 100 * 1000  # ms
+    elapsed_time = (time.time() - start_time) / 1 * 1000  # ms
     print(f"time cost: {elapsed_time} ms per image using {device}")
     print("-" * 50)

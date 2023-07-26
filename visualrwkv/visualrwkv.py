@@ -4,7 +4,6 @@ from pathlib import Path
 import torch
 from torchvision.transforms import transforms
 from torchvision.transforms.functional import InterpolationMode
-from torchvision.datasets.utils import download_url
 from omegaconf import DictConfig, OmegaConf
 from visualrwkv.model import VisualRWKV
 from visualrwkv.components.adapter import AdapterPretrain
@@ -16,6 +15,7 @@ _MODELS = {
 }
 MODEL_NAME2IMAGE_SIZE = {
     "VisualRWKV-small": 224,
+    "VisualRWKV-world-7b": 224,
 }
 
 
@@ -71,7 +71,7 @@ def get_model_config(model_name: str, rwkv_path, device) -> DictConfig:
     else:
         raise ValueError(f"device {device} not supported")
     model_config.rwkv = RWKVConfig(rwkv_path, rwkv_strategy)
-    model_config.visualrwkv = VisualRWKVConfig()
+    model_config.visualrwkv = VisualRWKVConfig(model_name=model_name)
     return model_config
 
 

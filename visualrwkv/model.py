@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer
+from .components.rwkv_tokenizer import WorldTokenizer
 from .components.rwkv_rnn import RWKV
 from .components.adapter import AdapterPretrain
 import contextlib
@@ -22,9 +23,12 @@ class VisualRWKV(nn.Module):
         self.adapter = adapter
         self.llm_proj = llm_proj
         # config tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = "<|padding|>"
-        self.tokenizer.bos_token = self.tokenizer.eos_token
+        if "world" in model_name:
+            self.tokenizer = WorldTokenizer("rwkv_vocab_v20230424.txt")
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.tokenizer.pad_token = "<|padding|>"
+            self.tokenizer.bos_token = self.tokenizer.eos_token
         # begin of image token and end of image token
         self.boi_token_ids = self.tokenizer("image:").input_ids
         self.eoi_token_ids = self.tokenizer("\n").input_ids
