@@ -38,8 +38,10 @@ RWKV models are here, please download LLM and its adapter.
 |-------------------|------------------------------------------------------------------------------------------------------------------|
 | RWKV-4 169M       | [RWKV-4 169M](https://huggingface.co/BlinkDL/rwkv-4-pile-169m/blob/main/RWKV-4-Pile-169M-20220807-8023.pth)       |
 | RWKV-1b5 raven    | [RWKV-1b5 raven](https://huggingface.co/BlinkDL/rwkv-4-raven/resolve/main/RWKV-4-Raven-1B5-v12-Eng98%25-Other2%25-20230520-ctx4096.pth) |
+| RWKV-7b world    | [RWKV-7b world](https://huggingface.co/BlinkDL/rwkv-4-world/resolve/main/RWKV-4-World-7B-v1-20230626-ctx4096.pth) |
 | Visual Adapter    | [adapted to RWKV-4 169M](https://huggingface.co/howard-hou/VisualRWKV/blob/main/rwkv169_coco-vg-sbu-cc_t5small_vit224.ckpt) |
 | Visual Adapter    | [adapted to RWKV-1b5 raven](https://huggingface.co/howard-hou/VisualRWKV/resolve/main/rwkv1b5raven_coco-vg-sbu-cc_t5small_vit224.ckpt) |
+| Visual Adapter    | [adapted to RWKV-7b world](https://huggingface.co/howard-hou/VisualRWKV/resolve/main/VisualRWKV-4-World-7B-v1-20230626-ctx4096_adapter.pth) |
 
 ## Zero-shot Performance
 
@@ -47,6 +49,7 @@ RWKV models are here, please download LLM and its adapter.
 
 | model | dataset | split      | overall | other | yes/no | number |
 |-----|---------|------------|---------|-------|--------|--------|
+|RWKV-7b world| vqav2   | validation | 39.69    | 32.99 | 51.76  | 30.28  |
 |RWKV-1b5 raven| vqav2   | validation | 43.7    | 34.35 | 60.67  | 30.25  |
 |RWKV-4 169M   | vqav2   | validation | 15.41   | 23.59 | 0.14   | 28.42  |
 
@@ -54,6 +57,8 @@ RWKV models are here, please download LLM and its adapter.
 
 | model | dataset | split | Bleu_1 | Bleu_2 | Bleu_3 | Bleu_4 | METEOR | ROUGE_L | CIDEr | SPICE |
 |-------|-------------------|-------------|--------|--------|--------|--------|--------|---------|-------|-------|
+|RWKV-7b world| coco | test | 0.6927 | 0.5097 | 0.3618 | 0.2529 | 0.233 | 0.4979  | 0.8463 | 0.1662|
+|RWKV-7b world| nocaps | val | 0.684 | 0.5094 | 0.3603 | 0.2503  | 0.2063 | 0.4692  | 0.6108 | 0.0903|
 |RWKV-1b5 raven| coco | test | 0.6911 | 0.5143 | 0.3652 | 0.2542 | 0.2376 | 0.5018  | 0.8658 | 0.1728|
 |RWKV-1b5 raven| nocaps | val | 0.6779 | 0.5027 | 0.3521 | 0.242  | 0.2062 | 0.4639  | 0.5988 | 0.0915|
 |RWKV-4 169M| coco | test | 0.6762 | 0.4957 | 0.3446 | 0.2332 | 0.2202 | 0.488   | 0.768  | 0.1562|
@@ -75,6 +80,8 @@ from tqdm import tqdm
 
 os.environ["RWKV_JIT_ON"] = "1"
 os.environ["RWKV_CUDA_ON"] = "0"
+# two options for model name: VisualRWKV-small, VisualRWKV-world-7b
+model_name = "VisualRWKV-small"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -83,7 +90,7 @@ adapter_path = "your_dir/rwkv169_coco-vg-sbu-cc_t5small_vit224.ckpt"
 rwkv_path = "your_dir/RWKV-4-Pile-169M-20220807-8023.pth"
 # now only support VisualRWKV-small, will support more models in the future
 model, preprocess = visualrwkv.load(
-    model_name="VisualRWKV-small", adapter_path=adapter_path, rwkv_path=rwkv_path
+    model_name=model_name, adapter_path=adapter_path, rwkv_path=rwkv_path
 )
 
 instruction = ["describe the image."]
