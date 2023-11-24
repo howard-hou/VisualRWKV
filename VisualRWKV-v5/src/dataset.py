@@ -109,7 +109,7 @@ class MyDataset(Dataset):
 
 
     def __len__(self):
-        return self.args.epoch_steps * self.args.micro_bsz
+        return len(self.list_data_dict)
 
     def __getitem__(self, idx):
         args = self.args
@@ -132,6 +132,10 @@ class MyDataset(Dataset):
         # image exist in the data
         if 'image' in sample:
             data_dict['images'] = image
+        else:
+            # image does not exist in the data, fill with zeros
+            crop_size = args.image_processor.crop_size
+            data_dict['images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
         return data_dict
     
 

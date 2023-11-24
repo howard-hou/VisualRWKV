@@ -11,11 +11,13 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
+from transformers import CLIPVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
+from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 
 def __nop(ob):
     return ob
@@ -285,7 +287,7 @@ class RWKV(pl.LightningModule):
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.parameters() if p.requires_grad]
-        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay, "my_lr_scale": 1.0}]
+        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
         if self.deepspeed_offload:
             return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
@@ -332,71 +334,99 @@ class RWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
 
-    def generate_init_weight(self):
-        print(
-            f"""
-############################################################################
-#
-# Init model weight (slow for large models)...
-#
-############################################################################
-"""
-        )
-        m = {}
-        for n in self.state_dict():
-            p = self.state_dict()[n]
-            shape = p.shape
 
-            gain = 1.0
-            scale = 1.0
-            if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
-                if 'ln_x.weight' in n:
-                    layer_scale = (1+int(n.split('.')[1])) / self.args.n_layer
-                    m[n] = (p * 0.0) + (layer_scale ** 0.7)
-                else:
-                    m[n] = p
+class VisualRWKV(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.rwkv = RWKV(args)
+        self.emb = self.rwkv.emb
+        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
+        self.vit.requires_grad_(False)
+        # linear projection from vit to rkwv
+        self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+
+    def configure_optimizers(self):
+        trainable_params = [p for p in self.rwkv.parameters() if p.requires_grad]
+        trainable_params += [p for p in self.proj.parameters() if p.requires_grad]
+        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
+        if self.deepspeed_offload:
+            return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+        return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+
+    def forward(self, samples):
+        args = self.args
+
+        x, targets = self.preparing_embedding(samples)
+
+        if args.dropout > 0:
+            x = self.drop0(x)
+
+        for block in self.blocks:
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
             else:
-                if n == "emb.weight":
-                    scale = -1 * self.args.lr_init
-                else:
-                    if shape[0] > shape[1]:
-                        gain = math.sqrt(shape[0] / shape[1])
+                x = block(x)
 
-                    zero = [".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']
+        x = self.ln_out(x)
 
-                    for kk in zero:
-                        if kk in n:
-                            scale = 0
-                    if n == "head.weight":
-                        scale = 0.5
-                    if "head_k." in n:
-                        scale = 0.1
-                    if "head_q." in n:
-                        scale = 0
+        x = self.head(x)
 
-                print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {str(scale).ljust(4)} {n}")
+        return x, targets
+    
+    def training_step(self, batch, batch_idx):
+        logits, targets = self(batch)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return L2Wrap.apply(loss, logits)
+    
+    def encode_images(self, images):
+        image_features = self.vit(images)
+        image_features = self.proj(image_features)
+        return image_features
+    
+    def preparing_embedding(self, samples):
+        device, label_dtype = samples["labels"].device, samples["labels"].dtype
+        emb_dtype = samples["images"].dtype
+        ### prepare input token
+        image_features  = self.encode_images(samples["images"])
+        # 
+        new_input_embeds = []
+        new_labels = []
+        cur_image_idx = 0
+        for idx, cur_input_ids in enumerate(samples["input_ids"]):
+            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
+            if num_images == 0: # no image in this sample
+                new_input_embeds.append(self.emb(cur_input_ids))
+                new_labels.append(samples["labels"][idx])
+                cur_image_idx += 1
+                continue
+            # if there are images in this sample
+            image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
+            cur_labels = samples["labels"][idx]
+            cur_new_input_embeds = []
+            cur_new_labels = []
+            for i in range(len(image_token_indices) - 1):
+                cur_new_input_embeds.append(self.emb(cur_input_ids[image_token_indices[i] + 1 : image_token_indices[i + 1]]))
+                cur_new_labels.append(cur_labels[image_token_indices[i] + 1 : image_token_indices[i + 1]])
+                cur_image_features = image_features[cur_image_idx]
+                cur_image_idx += 1
+                cur_new_input_embeds.append(cur_image_features)
+                cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=device, dtype=label_dtype))
+            cur_new_input_embeds = torch.cat(cur_new_input_embeds)
+            cur_new_labels = torch.cat(cur_new_labels)
 
-                if self.args.accelerator.upper() == "GPU":
-                    m[n] = torch.empty((shape[0], shape[1]), device="cuda")
-                else:
-                    m[n] = torch.empty((shape[0], shape[1]))
-
-                if scale == 0:
-                    nn.init.zeros_(m[n])
-                elif scale < 0:
-                    nn.init.uniform_(m[n], a=scale, b=-scale)
-                else:
-                    nn.init.orthogonal_(m[n], gain=gain * scale)
-
-            m[n] = m[n].cpu()
-            if os.environ["RWKV_FLOAT_MODE"] == "fp16":
-                m[n] = m[n].half()
-            elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
-                m[n] = m[n].bfloat16()
-
-            # if n == "emb.weight":
-            #     print(m[n])
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        return m
+            new_input_embeds.append(cur_new_input_embeds)
+            new_labels.append(cur_new_labels)
+        # Truncate sequences to max length as image embeddings can make the sequence longer
+        new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
+        new_labels = [x[:self.args.ctx_len] for x in new_labels]
+        # Combine them
+        max_len = max(x.shape[0] for x in new_input_embeds)
+        batch_size = len(new_input_embeds)
+        new_input_embeds_padded = torch.zeros((batch_size, max_len, self.args.n_embd), dtype=emb_dtype, device=device)
+        new_labels_padded = torch.full((batch_size, max_len), IGNORE_INDEX, dtype=label_dtype, device=device)
+        for i, (cur_new_embed, cur_new_labels) in enumerate(zip(new_input_embeds, new_labels)):
+            cur_len = cur_new_embed.shape[0]
+            new_input_embeds_padded[i, :cur_len] = cur_new_embed
+            new_labels_padded[i, :cur_len] = cur_new_labels
+        return new_input_embeds_padded, new_labels_padded
