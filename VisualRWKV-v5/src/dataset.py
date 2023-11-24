@@ -69,14 +69,26 @@ def mask_targets_from_human(targets, tokenized_lens, speakers):
             targets[cur_idx:cur_idx + tokenized_len] = IGNORE_INDEX
         cur_idx += tokenized_len
 
+def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
+    input_ids = input_ids[:max_len]
+    targets = targets[:max_len]
+    padding_len = max_len - len(input_ids)
+    if padding_len <= 0:
+        return input_ids, targets
+    # input_ids and targets are tensors
+    input_ids = torch.cat([input_ids, torch.tensor([pad_token_id] * padding_len, dtype=torch.long)])
+    targets = torch.cat([targets, torch.tensor([IGNORE_INDEX] * padding_len, dtype=torch.long)])
+    return input_ids, targets
 
-def preprocess(conversations, tokenizer, has_image):
+
+def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0):
     """
     Given a list of sources, each is a conversation list. This transform:
     1. Add \n\n after each round;
     2. Concatenate conversations together;
     3. Tokenize the concatenated conversation;
     4. Make a deepcopy as the target. Mask human words with IGNORE_INDEX.
+    5. Pad to max length.
     """
     # add end signal and concatenate together
     conversations = _add_speaker_and_signal(conversations)
@@ -93,6 +105,7 @@ def preprocess(conversations, tokenizer, has_image):
         tokenized_lens = [len(tokenizer.encode(s["value"])) for s in conversations]
     speakers = [sentence["from"] for sentence in conversations]
     mask_targets_from_human(targets, tokenized_lens, speakers)
+    input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
     return dict(input_ids=input_ids, labels=targets)
 
 
@@ -127,7 +140,9 @@ class MyDataset(Dataset):
         data_dict = preprocess(
             conversations,
             self.tokenizer,
-            has_image=('image' in sample))
+            has_image=('image' in sample),
+            ctx_len=args.ctx_len,
+            pad_token_id=0)
         
         # image exist in the data
         if 'image' in sample:

@@ -33,6 +33,11 @@ if __name__ == "__main__":
     parser.add_argument("--micro_bsz", default=12, type=int)  # micro batch size (batch size per GPU)
     parser.add_argument("--n_layer", default=6, type=int)
     parser.add_argument("--n_embd", default=512, type=int)
+    parser.add_argument("--dim_att", default=0, type=int)
+    parser.add_argument("--dim_ffn", default=0, type=int)
+    parser.add_argument("--pre_ffn", default=0, type=int)  # replace first att layer by ffn (sometimes better)
+    parser.add_argument("--head_size_a", default=64, type=int)
+    parser.add_argument("--head_size_divisor", default=8, type=int)
 
     parser.add_argument("--lr_init", default=6e-4, type=float)  # 6e-4 for L12-D768, 4e-4 for L24-D1024, 3e-4 for L24-D2048
     parser.add_argument("--lr_final", default=1e-5, type=float)
@@ -44,8 +49,10 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0, type=float) # try 0.01 / 0.02 / 0.05 / 0.1
     parser.add_argument("--weight_decay", default=0, type=float) # try 0.1 / 0.01 / 0.001
     parser.add_argument("--weight_decay_final", default=-1, type=float)
+    parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
 
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
+    parser.add_argument("--image_folder", type=str, default="images")
 
 
     if pl.__version__[0]=='2':
@@ -86,66 +93,18 @@ if __name__ == "__main__":
     args.num_sanity_val_steps = 0
     args.check_val_every_n_epoch = int(1e20)
     args.log_every_n_steps = int(1e20)
-    args.max_epochs = -1  # continue forever
+    args.max_epochs = args.epoch_count  # continue forever
     args.betas = (args.beta1, args.beta2)
     args.real_bsz = int(args.num_nodes) * int(args.devices) * args.micro_bsz
-    os.environ["RWKV_MY_TESTING"] = args.my_testing
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
         args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32) # default = 3.5x emb size
 
-    if args.data_type == "wds_img":
-        args.run_name = f"v{args.my_img_version}-{args.my_img_size}-{args.my_img_bit}bit-{args.my_img_clip}x{args.my_img_clip_scale}"
-        args.proj_dir = f"{args.proj_dir}-{args.run_name}"
-    else:
-        args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
+    args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
     if not os.path.exists(args.proj_dir):
         os.makedirs(args.proj_dir)
-
-    if args.my_pile_stage > 0:
-        magic_prime_bak = args.magic_prime
-
-        if args.my_pile_shift < 0:
-            args.my_pile_shift = 0
-
-        if magic_prime_bak > 0:
-            args.magic_prime = magic_prime_bak
-        if args.my_qa_mask == 2:
-            args.epoch_count = 2 * args.magic_prime // 40320
-        else:
-            args.epoch_count = args.magic_prime // 40320
-
-        args.epoch_steps = 40320 // args.real_bsz
-        assert args.epoch_steps * args.real_bsz == 40320
-        # if args.my_pile_stage == 2:
-        #     assert args.lr_final == args.lr_init
-        if args.my_pile_stage >= 2:  # find latest saved model
-            list_p = []
-            for p in os.listdir(args.proj_dir):
-                if p.startswith("rwkv") and p.endswith(".pth"):
-                    p = ((p.split("-"))[1].split("."))[0]
-                    if p != "final":
-                        if p == "init":
-                            p = -1
-                        else:
-                            p = int(p)
-                        list_p += [p]
-            list_p.sort()
-            max_p = list_p[-1]
-            if len(list_p) > 1:
-                args.my_pile_prev_p = list_p[-2]  # in case max_p is corrupted
-            if max_p == -1:
-                args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-            else:
-                args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-                if args.warmup_steps < 0:
-                    if args.my_pile_stage == 2:
-                        args.warmup_steps = 10
-                    else:
-                        args.warmup_steps = 30
-            args.epoch_begin = max_p + 1
 
     samples_per_epoch = args.epoch_steps * args.real_bsz
     tokens_per_epoch = samples_per_epoch * args.ctx_len
@@ -179,7 +138,7 @@ if __name__ == "__main__":
     )
     rank_zero_info(str(vars(args)) + "\n")
 
-    assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "uint16"]
+    assert args.data_type in ["json"]
 
     if args.lr_final == 0 or args.lr_init == 0:
         rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
@@ -216,44 +175,17 @@ if __name__ == "__main__":
 
     from src.trainer import train_callback, generate_init_weight
     from src.dataset import MyDataset
+    from src.rwkv_tokenizer import TRIE_TOKENIZER
+    from transformers import CLIPImageProcessor
+
+    args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
+    args.image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
 
     train_data = MyDataset(args)
     args.vocab_size = train_data.vocab_size
 
-    from src.model import RWKV
-    model = RWKV(args)
-
-    if len(args.load_model) == 0 or args.my_pile_stage == 1:  # shall we build the initial weights?
-        init_weight_name = f"{args.proj_dir}/rwkv-init.pth"
-        generate_init_weight(model, init_weight_name)  # save initial weights
-        args.load_model = init_weight_name
-
-    rank_zero_info(f"########## Loading {args.load_model}... ##########")
-    try:
-        load_dict = torch.load(args.load_model, map_location="cpu")
-        load_keys = list(load_dict.keys())
-        for k in load_keys:
-            if k.startswith('_forward_module.'):
-                load_dict[k.replace('_forward_module.','')] = load_dict[k]
-                del load_dict[k]
-    except:
-        rank_zero_info(f"Bad checkpoint {args.load_model}")
-        if args.my_pile_stage >= 2:  # try again using another checkpoint
-            max_p = args.my_pile_prev_p
-            if max_p == -1:
-                args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-            else:
-                args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-            args.epoch_begin = max_p + 1
-            rank_zero_info(f"Trying {args.load_model}")
-            load_dict = torch.load(args.load_model, map_location="cpu")
-
-    if args.load_partial == 1:
-        load_keys = load_dict.keys()
-        for k in model.state_dict():
-            if k not in load_keys:
-                load_dict[k] = model.state_dict()[k]
-    model.load_state_dict(load_dict)
+    from src.model import VisualRWKV
+    model = VisualRWKV(args)
 
     if pl.__version__[0]=='2':
         trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,

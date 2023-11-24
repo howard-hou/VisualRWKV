@@ -50,25 +50,6 @@ class train_callback(pl.Callback):
             # if trainer.is_global_zero:
             #     print(trainer.global_step, decay_step, decay_total, w_step, progress, lr)
 
-        if args.my_exit_tokens != 0: # cosine decay
-            real_tokens = real_step * args.ctx_len * args.real_bsz
-            warmup_tokens = w_step * args.ctx_len * args.real_bsz
-            progress = (real_tokens - warmup_tokens) / (abs(args.my_exit_tokens) - warmup_tokens)
-            progress = max(0, min(1, progress))
-            lr_final_factor = args.lr_final / args.lr_init                
-            lr_mult = (0.5 + lr_final_factor / 2) + (0.5 - lr_final_factor / 2) * math.cos(math.pi * progress)
-            if args.my_exit_tokens > 0:
-                lr = args.lr_init * lr_mult
-            else:
-                lr = (lr + args.lr_init * lr_mult) / 2
-            if progress >= 1:
-                if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):
-                    my_save(
-                        args, trainer,
-                        pl_module.state_dict(),
-                        f"{args.proj_dir}/rwkv-final.pth",
-                    )
-                    exit(0)
         if trainer.global_step < w_step:
             lr = lr * (0.2 + 0.8 * trainer.global_step / w_step)
 
@@ -80,9 +61,6 @@ class train_callback(pl.Callback):
         for param_group in trainer.optimizers[0].param_groups:
             if param_group["weight_decay"] > 0:
                 param_group["weight_decay"] = wd_now
-            if args.layerwise_lr > 0:
-                param_group["lr"] = lr * param_group["my_lr_scale"]
-                # print(param_group["lr"], param_group["my_lr_scale"])
             else:
                 param_group["lr"] = lr
 
@@ -144,16 +122,6 @@ class train_callback(pl.Callback):
                 if kt_s > 0:
                     lll["kt/s"] = kt_s
                 trainer.my_wandb.log(lll, step=int(real_step))
-        if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy): # save pth
-            if args.magic_prime > 0:
-                expand_factor = 2 if args.my_qa_mask > 0 else 1
-                if int(real_step) == int(args.magic_prime * expand_factor // args.real_bsz) - 1 + int(args.my_random_steps):
-                    to_save_dict = pl_module.state_dict()
-                    my_save(
-                        args, trainer,
-                        to_save_dict,
-                        f"{args.proj_dir}/rwkv-final.pth",
-                    )
                 
 
     def on_train_epoch_start(self, trainer, pl_module):

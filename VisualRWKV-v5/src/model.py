@@ -300,12 +300,10 @@ class RWKV(pl.LightningModule):
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
 
-    def forward(self, idx):
+    def forward(self, x):
         args = self.args
-        B, T = idx.size()
+        B, T, D = x.size()
         assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
-
-        x = self.emb(idx)
 
         if args.dropout > 0:
             x = self.drop0(x)
@@ -340,11 +338,24 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
+        self.load_rwkv_from_pretrained(args.load_model)
         self.emb = self.rwkv.emb
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         # linear projection from vit to rkwv
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+
+    def load_rwkv_from_pretrained(self, path):
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
+        rank_zero_info(f"Loaded pretrained RWKV from {path}")
+
+    @property
+    def deepspeed_offload(self) -> bool:
+        strategy = self.trainer.strategy
+        if isinstance(strategy, DeepSpeedStrategy):
+            cfg = strategy.config["zero_optimization"]
+            return cfg.get("offload_optimizer") or cfg.get("offload_param")
+        return False
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.rwkv.parameters() if p.requires_grad]
@@ -355,32 +366,25 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        args = self.args
-
         x, targets = self.preparing_embedding(samples)
-
-        if args.dropout > 0:
-            x = self.drop0(x)
-
-        for block in self.blocks:
-            if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-
-        x = self.ln_out(x)
-
-        x = self.head(x)
-
-        return x, targets
+        logits = self.rwkv(x)
+        return logits, targets
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = targets[..., 1:].contiguous()
+        loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         return L2Wrap.apply(loss, logits)
     
+    def training_step_end(self, batch_parts):
+        if pl.__version__[0]!='2':
+            all = self.all_gather(batch_parts)
+            if self.trainer.is_global_zero:
+                self.trainer.my_loss_all = all
+    
     def encode_images(self, images):
-        image_features = self.vit(images)
+        image_features = self.vit(images).last_hidden_state
         image_features = self.proj(image_features)
         return image_features
     
@@ -392,31 +396,32 @@ class VisualRWKV(pl.LightningModule):
         # 
         new_input_embeds = []
         new_labels = []
-        cur_image_idx = 0
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0: # no image in this sample
                 new_input_embeds.append(self.emb(cur_input_ids))
                 new_labels.append(samples["labels"][idx])
-                cur_image_idx += 1
-                continue
-            # if there are images in this sample
-            image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
-            cur_labels = samples["labels"][idx]
-            cur_new_input_embeds = []
-            cur_new_labels = []
-            for i in range(len(image_token_indices) - 1):
-                cur_new_input_embeds.append(self.emb(cur_input_ids[image_token_indices[i] + 1 : image_token_indices[i + 1]]))
-                cur_new_labels.append(cur_labels[image_token_indices[i] + 1 : image_token_indices[i + 1]])
-                cur_image_features = image_features[cur_image_idx]
-                cur_image_idx += 1
+            elif num_images == 1: # only one image in this sample
+                image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
+                cur_labels = samples["labels"][idx]
+                # first text part
+                cur_new_input_embeds = [self.emb(cur_input_ids[:image_token_indice])]
+                cur_new_labels = [cur_labels[:image_token_indice]]
+                # image part
+                cur_image_features = image_features[idx]
                 cur_new_input_embeds.append(cur_image_features)
                 cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=device, dtype=label_dtype))
-            cur_new_input_embeds = torch.cat(cur_new_input_embeds)
-            cur_new_labels = torch.cat(cur_new_labels)
+                # last text part
+                cur_new_input_embeds.append(self.emb(cur_input_ids[image_token_indice+1:]))
+                cur_new_labels.append(cur_labels[image_token_indice+1:])
+                # concat them
+                cur_new_input_embeds = torch.cat(cur_new_input_embeds)
+                cur_new_labels = torch.cat(cur_new_labels)
 
-            new_input_embeds.append(cur_new_input_embeds)
-            new_labels.append(cur_new_labels)
+                new_input_embeds.append(cur_new_input_embeds)
+                new_labels.append(cur_new_labels)
+            else:
+                raise ValueError(f"Too many images in one sample: {num_images}, should be 0 or 1.")
         # Truncate sequences to max length as image embeddings can make the sequence longer
         new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
         new_labels = [x[:self.args.ctx_len] for x in new_labels]
