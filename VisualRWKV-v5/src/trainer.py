@@ -163,8 +163,6 @@ class train_callback(pl.Callback):
 
             trainer.my_loss_sum = 0
             trainer.my_loss_count = 0
-            if (args.epoch_begin + trainer.current_epoch) >= args.my_exit:
-                exit(0)
 
 
 @rank_zero_only
