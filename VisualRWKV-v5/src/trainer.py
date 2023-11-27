@@ -75,7 +75,6 @@ class train_callback(pl.Callback):
                 trainer.my_log = open(args.proj_dir + "/train_log.txt", "a")
                 trainer.my_log.write(f"NEW RUN {args.my_timestamp}\n{vars(self.args)}\n")
                 try:
-                    print(f"\n{trainer.strategy.config}\n")
                     trainer.my_log.write(f"{trainer.strategy.config}\n")
                 except:
                     pass

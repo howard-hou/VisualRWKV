@@ -53,6 +53,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
+    parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
 
 
     if pl.__version__[0]=='2':
@@ -65,6 +66,7 @@ if __name__ == "__main__":
     else:
         parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
+    args.accumulate_grad_batches = args.my_accumulate_grad_batches
 
     ########################################################################################################
 
