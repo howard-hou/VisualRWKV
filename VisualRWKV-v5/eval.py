@@ -39,7 +39,7 @@ def eval_model(args):
 
         conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
         conv.append_message(conv.roles[0], qs)
-        conv.append_message(conv.roles[1], None)
+        conv.append_message(conv.roles[1], "")
 
         conversations = process_image_tokens_in_conversations(conv.conversations)
 

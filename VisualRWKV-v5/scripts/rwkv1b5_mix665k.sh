@@ -1,6 +1,6 @@
 export CUDA_VISIBLE_DEVICES=0 
 
-python train.py --load_model "/houhaowen/huggingface_models/BlinkDL/rwkv-5-world/RWKV-5-World-1B5-v2-20231025-ctx4096.pth" \
+python train.py --model_path "out/rwkv1b5_pretrain/rwkv-0.pth" \
     --wandb "" --proj_dir "out/rwkv1b5_mix665k" \
     --data_file "/houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k.json" --data_type "json" --vocab_size 65536 \
     --ctx_len 256 --epoch_steps 0 --epoch_count 1 --epoch_begin 0 --epoch_save 1 \

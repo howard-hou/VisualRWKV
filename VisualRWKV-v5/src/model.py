@@ -357,6 +357,10 @@ class VisualRWKV(pl.LightningModule):
             cfg = strategy.config["zero_optimization"]
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
+    
+    def freeze_rwkv(self):
+        for p in self.rwkv.parameters():
+            p.requires_grad_(False)
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.rwkv.parameters() if p.requires_grad]
