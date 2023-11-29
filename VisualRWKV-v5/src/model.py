@@ -338,7 +338,8 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
-        self.load_rwkv_from_pretrained(args.load_model)
+        if len(args.load_model) > 0:
+            self.load_rwkv_from_pretrained(args.load_model)
         self.emb = self.rwkv.emb
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
@@ -435,3 +436,30 @@ class VisualRWKV(pl.LightningModule):
             new_input_embeds_padded[i, :cur_len] = cur_new_embed
             new_labels_padded[i, :cur_len] = cur_new_labels
         return new_input_embeds_padded, new_labels_padded
+    
+    def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens) -> list[int]:
+        ''' one mode to generate, only generate one sample at a time
+        # input_ids: [1, seq_len]
+        # images: [1, 3, 224, 224]
+        # do_sample: bool
+        # temperature: float
+        # top_p: float
+        # max_new_tokens: int
+        '''
+        # prepare samples
+        sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
+        # prepare embedding, x: [1, seq_len, n_embd]
+        x, _ = self.preparing_embedding(sampels)
+        # generate
+        generated = []
+        for i in range(max_new_tokens):
+            logits = self.rwkv(x)[:, -1, :]
+            if do_sample:
+                raise NotImplementedError
+            else: # greedy
+                # [1, vocab_size] -> [1, 1]
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            generated.append(next_token.item())
+            x = torch.cat((x, self.emb(next_token)), dim=-2)
+            x = x[:, -self.args.ctx_len:, :] # truncate
+        return generated

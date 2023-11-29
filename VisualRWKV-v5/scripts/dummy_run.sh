@@ -7,5 +7,5 @@ python train.py --load_model "/houhaowen/huggingface_models/BlinkDL/rwkv-5-world
     --micro_bsz 8 --n_layer 24 --n_embd 2048 --pre_ffn 0 \
     --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
     --accelerator gpu --devices 1 --precision bf16 --strategy deepspeed_stage_2 --grad_cp 0 \
-    --image_folder /houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/data/ \
+    --image_folder /houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/images/ \
     --vision_tower_name /houhaowen/huggingface_models/openai/clip-vit-base-patch32

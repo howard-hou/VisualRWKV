@@ -8,7 +8,7 @@ from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
-from typing import Dict, Optional, Sequence, Any
+from typing import Dict, List, Sequence, Any
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
@@ -18,10 +18,11 @@ DEFAULT_IMAGE_TOKEN = "<image>"
 
 
 def process_image_tokens_in_conversations(
-    conversations: Sequence[str],
-) -> Dict:
+    conversations: Sequence[Dict],
+) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
+    replace \n\n with \n
     """
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
@@ -31,6 +32,19 @@ def process_image_tokens_in_conversations(
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
+
+    return conversations
+
+def process_tokens_in_conversations(
+    conversations: Sequence[Dict],
+) -> Sequence[Dict]:
+    """
+    Process tokens within conversations.
+    replace \n\n with \n
+    """
+    for sentence in conversations:
+        sentence['value'] = sentence['value'].strip()
+        sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
 
     return conversations
 
@@ -46,8 +60,11 @@ def _add_speaker_and_signal(conversations):
             from_str = "Assistant"
         else:
             raise ValueError(f"Unknown speaker: {from_str}, must be human or gpt.")
-        sentence["value"] = (from_str + ": " +
-                             sentence["value"] + END_SIGNAL)
+        
+        if sentence["value"]: # for training, add end signal
+            sentence["value"] = (from_str + ": " + sentence["value"] + END_SIGNAL)
+        else: # for inference, not add end signal and no whitespace after colon
+            sentence["value"] = from_str + ":"
     return conversations
 
 def tokenize_with_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX):
@@ -81,7 +98,7 @@ def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
     return input_ids, targets
 
 
-def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0):
+def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_pad_to_max_length=True):
     """
     Given a list of sources, each is a conversation list. This transform:
     1. Add \n\n after each round;
@@ -105,8 +122,9 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0):
         tokenized_lens = [len(tokenizer.encode(s["value"])) for s in conversations]
     speakers = [sentence["from"] for sentence in conversations]
     mask_targets_from_human(targets, tokenized_lens, speakers)
-    input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
-    return dict(input_ids=input_ids, labels=targets)
+    if do_pad_to_max_length:
+        input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
+    return dict(input_ids=input_ids, labels=targets, input_text=conversation)
 
 
 
@@ -135,7 +153,7 @@ class MyDataset(Dataset):
             image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
         else:
-            conversations = copy.deepcopy(sample["conversations"])
+            conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
         data_dict = preprocess(
             conversations,
