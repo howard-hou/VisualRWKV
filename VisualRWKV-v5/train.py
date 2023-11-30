@@ -192,7 +192,7 @@ if __name__ == "__main__":
     model = VisualRWKV(args)
     if args.model_path:
         msg = model.load_state_dict(torch.load(args.model_path))
-        rank_zero_info(f"loading model from {args.model_path}: {msg}")
+        rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv()
 
