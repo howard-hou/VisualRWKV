@@ -132,19 +132,20 @@ class MyDataset(Dataset):
     def __init__(self, args):
         self.args = args
         self.vocab_size = args.vocab_size
-        list_data_dict = json.load(open(args.data_file, "r"))
-
-        rank_zero_info("Formatting inputs...")
         self.tokenizer = args.tokenizer
-        self.list_data_dict = list_data_dict
-
+        self.list_data_dict = json.load(open(args.data_file, "r"))
+        self.data_size = len(self.list_data_dict)
+        self.idx = 0 # global index
 
     def __len__(self):
-        return len(self.list_data_dict)
+        return self.args.epoch_steps * self.args.micro_bsz
 
     def __getitem__(self, idx):
         args = self.args
+        # replace idx with global index
+        idx = self.idx % self.data_size
         sample = self.list_data_dict[idx]
+        self.idx += 1
         if 'image' in sample:
             image_file = self.list_data_dict[idx]['image']
             image_folder = args.image_folder
