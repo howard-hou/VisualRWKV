@@ -55,7 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
-    parser.add_argument("--freeze_rwkv", default=0, type=int)  # freeze RWKV weights
+    parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
 
 
     if pl.__version__[0]=='2':
@@ -194,7 +194,7 @@ if __name__ == "__main__":
         msg = model.load_state_dict(torch.load(args.model_path))
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
-        model.freeze_rwkv()
+        model.freeze_rwkv(args.freeze_rwkv)
 
     if pl.__version__[0]=='2':
         trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,

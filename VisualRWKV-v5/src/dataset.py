@@ -135,17 +135,15 @@ class MyDataset(Dataset):
         self.tokenizer = args.tokenizer
         self.list_data_dict = json.load(open(args.data_file, "r"))
         self.data_size = len(self.list_data_dict)
-        self.idx = 0 # global index
 
     def __len__(self):
         return self.args.epoch_steps * self.args.micro_bsz
 
     def __getitem__(self, idx):
         args = self.args
-        # replace idx with global index
-        idx = self.idx % self.data_size
+        # replace idx with random index
+        idx = random.randrange(self.data_size)
         sample = self.list_data_dict[idx]
-        self.idx += 1
         if 'image' in sample:
             image_file = self.list_data_dict[idx]['image']
             image_folder = args.image_folder
@@ -184,6 +182,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer", type=str, default="images")
     parser.add_argument("--epoch_steps", type=int, default=100)
     parser.add_argument("--micro_bsz", type=int, default=1)
+    parser.add_argument("--ctx_len", type=int, default=512)
     args = parser.parse_args()
     from rwkv.rwkv_tokenizer import TRIE_TOKENIZER
     from transformers import CLIPImageProcessor

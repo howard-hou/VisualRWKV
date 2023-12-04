@@ -358,9 +358,19 @@ class VisualRWKV(pl.LightningModule):
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
     
-    def freeze_rwkv(self):
-        for p in self.rwkv.parameters():
-            p.requires_grad_(False)
+    def freeze_rwkv(self, num_layers_to_freeze=0):
+        # freeze all layers including embedding and lm head
+        if num_layers_to_freeze == self.args.n_layer:
+            self.rwkv.requires_grad_(False)
+        # otherwise, freeze only the first num_layers_to_freeze layers
+        for i, block in enumerate(self.rwkv.blocks):
+            if i < num_layers_to_freeze:
+                for p in block.parameters():
+                    p.requires_grad_(False)
+            else:
+                for p in block.parameters():
+                    p.requires_grad_(True)
+
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.rwkv.parameters() if p.requires_grad]
