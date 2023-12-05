@@ -340,7 +340,6 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.emb = self.rwkv.emb
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         # linear projection from vit to rkwv
@@ -414,20 +413,20 @@ class VisualRWKV(pl.LightningModule):
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0: # no image in this sample
-                new_input_embeds.append(self.emb(cur_input_ids))
+                new_input_embeds.append(self.rwkv.emb(cur_input_ids))
                 new_labels.append(samples["labels"][idx])
             elif num_images == 1: # only one image in this sample
                 image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
                 cur_labels = samples["labels"][idx]
                 # first text part
-                cur_new_input_embeds = [self.emb(cur_input_ids[:image_token_indice])]
+                cur_new_input_embeds = [self.rwkv.emb(cur_input_ids[:image_token_indice])]
                 cur_new_labels = [cur_labels[:image_token_indice]]
                 # image part
                 cur_image_features = image_features[idx]
                 cur_new_input_embeds.append(cur_image_features)
                 cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=device, dtype=label_dtype))
                 # last text part
-                cur_new_input_embeds.append(self.emb(cur_input_ids[image_token_indice+1:]))
+                cur_new_input_embeds.append(self.rwkv.emb(cur_input_ids[image_token_indice+1:]))
                 cur_new_labels.append(cur_labels[image_token_indice+1:])
                 # concat them
                 cur_new_input_embeds = torch.cat(cur_new_input_embeds)
@@ -474,6 +473,6 @@ class VisualRWKV(pl.LightningModule):
                 # [1, vocab_size] -> [1, 1]
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
             generated.append(next_token.item())
-            x = torch.cat((x, self.emb(next_token)), dim=-2)
+            x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
             x = x[:, -self.args.ctx_len:, :] # truncate
         return generated
