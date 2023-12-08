@@ -342,6 +342,13 @@ class VisualRWKV(pl.LightningModule):
             self.load_rwkv_from_pretrained(args.load_model)
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
+        # resampler
+        self.query = nn.Parameter(torch.zeros(args.n_resampler_query, self.vit.config.hidden_size))
+        nn.init.trunc_normal_(self.query, std=0.02)
+        resampler_layer = nn.TransformerDecoderLayer(d_model=self.vit.config.hidden_size, 
+                                                     nhead=self.vit.config.num_attention_heads,
+                                                     batch_first=True)
+        self.resampler = nn.TransformerDecoder(resampler_layer, num_layers=args.n_resampler_layer)
         # linear projection from vit to rkwv
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
@@ -398,8 +405,15 @@ class VisualRWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
     
     def encode_images(self, images):
+        B, N, C, H, W = images.shape
+        images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
-        image_features = self.proj(image_features)
+        L, D = image_features.shape[1], image_features.shape[2]
+        # rerange [B*N, L, D] -> [B, L*N, D]
+        image_features = image_features.view(B, L*N, D)
+        # resample
+        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features)
+        image_features = self.proj(image_features) # [B, Q, n_embd]
         return image_features
     
     def preparing_embedding(self, samples):

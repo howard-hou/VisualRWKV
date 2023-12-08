@@ -54,6 +54,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
+    parser.add_argument("--n_resampler_query", type=int, default=196)
+    parser.add_argument("--n_resampler_layer", type=int, default=1)
+    parser.add_argument("--detail", type=str, default="high")
     parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
 

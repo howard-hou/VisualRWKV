@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
+from .utils import crop_6_squares
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
@@ -22,6 +23,7 @@ def process_image_tokens_in_conversations(
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
+    image first, then text
     replace \n\n with \n
     """
     for sentence in conversations:
@@ -149,7 +151,11 @@ class MyDataset(Dataset):
             image_folder = args.image_folder
             processor = args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
-            image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+            if args.detail == 'high':
+                image = [image] + crop_6_squares(image, processor.crop_size['height'])
+                image = processor(images=image, return_tensors='pt')['pixel_values']
+            else:
+                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
@@ -166,8 +172,12 @@ class MyDataset(Dataset):
             data_dict['images'] = image
         else:
             # image does not exist in the data, fill with zeros
-            crop_size = args.image_processor.crop_size
-            data_dict['images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
+            if args.detail == 'high':
+                crop_size = args.image_processor
+                data_dict['images'] = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
+            else:
+                crop_size = args.image_processor.crop_size
+                data_dict['images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
         return data_dict
     
 
