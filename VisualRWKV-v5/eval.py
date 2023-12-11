@@ -10,7 +10,7 @@ from pathlib import Path
 from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation
+from src.utils import Conversation, crop_6_squares
 from transformers import CLIPImageProcessor
 
 
@@ -44,7 +44,12 @@ def eval_model(args):
         conversations = process_image_tokens_in_conversations(conv.conversations)
 
         image = Image.open(image_folder / image_file)
-        image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+        if args.detail == 'high':
+            image = [image] + crop_6_squares(image, image_processor.crop_size['height'])
+            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
+            image_tensor = image_tensor.unsqueeze(0)
+        else:
+            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
         image_tensor = image_tensor.bfloat16().to(args.device)
 
         data_dict = preprocess(
@@ -94,6 +99,9 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
+    parser.add_argument("--n_resampler_query", type=int, default=196)
+    parser.add_argument("--n_resampler_layer", type=int, default=1)
+    parser.add_argument("--detail", type=str, default="high")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)

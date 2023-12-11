@@ -342,15 +342,18 @@ class VisualRWKV(pl.LightningModule):
             self.load_rwkv_from_pretrained(args.load_model)
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
-        # resampler
-        self.query = nn.Parameter(torch.zeros(args.n_resampler_query, self.vit.config.hidden_size))
-        nn.init.trunc_normal_(self.query, std=0.02)
+        # resampler, max 4096 tokens and 16 images
+        self.resampler_pos_embed = nn.Parameter(torch.zeros(1, 4096, self.vit.config.hidden_size))
+        self.resampler_type_embed = nn.Parameter(torch.zeros(1, 16, self.vit.config.hidden_size))
         resampler_layer = nn.TransformerDecoderLayer(d_model=self.vit.config.hidden_size, 
                                                      nhead=self.vit.config.num_attention_heads,
                                                      batch_first=True)
         self.resampler = nn.TransformerDecoder(resampler_layer, num_layers=args.n_resampler_layer)
+        ### todo: add type embedding and position embedding
         # linear projection from vit to rkwv
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        # register diag mask
+        self.register_buffer("diag_mask", torch.eye(args.n_resampler_query, dtype=torch.bool))
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -404,15 +407,19 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
     
-    def encode_images(self, images):
+    def encode_images(self, images, query):
         B, N, C, H, W = images.shape
         images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
         L, D = image_features.shape[1], image_features.shape[2]
-        # rerange [B*N, L, D] -> [B, L*N, D]
-        image_features = image_features.view(B, L*N, D)
-        # resample
-        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features)
+        # rerange [B*N, L, D] -> [B, N, L, D]
+        image_features = image_features.view(B, N, L, D)
+        # add type embedding
+        image_features = image_features + self.resampler_type_embed[:, :N]
+        # add position embedding -> [B, N*L, D]
+        image_features = image_features.view(B, N*L, D) + self.resampler_pos_embed[:, :L*N]
+        # resample, use diagonal mask to avoid attention between query tokens
+        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features, tgt_is_causal=True)
         image_features = self.proj(image_features) # [B, Q, n_embd]
         return image_features
     

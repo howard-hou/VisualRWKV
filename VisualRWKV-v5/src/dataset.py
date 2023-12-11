@@ -173,7 +173,7 @@ class MyDataset(Dataset):
         else:
             # image does not exist in the data, fill with zeros
             if args.detail == 'high':
-                crop_size = args.image_processor
+                crop_size = args.image_processor.crop_size
                 data_dict['images'] = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
             else:
                 crop_size = args.image_processor.crop_size
