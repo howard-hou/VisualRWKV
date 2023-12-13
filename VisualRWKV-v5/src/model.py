@@ -343,17 +343,21 @@ class VisualRWKV(pl.LightningModule):
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         # resampler, max 4096 tokens and 16 images
-        self.resampler_pos_embed = nn.Parameter(torch.zeros(1, 4096, self.vit.config.hidden_size))
-        self.resampler_type_embed = nn.Parameter(torch.zeros(1, 16, self.vit.config.hidden_size))
+        # self.resampler_pos_embed = nn.Parameter(torch.zeros(1, 4096, self.vit.config.hidden_size))
+        # self.resampler_type_embed = nn.Parameter(torch.zeros(1, 16, self.vit.config.hidden_size))
         resampler_layer = nn.TransformerDecoderLayer(d_model=self.vit.config.hidden_size, 
                                                      nhead=self.vit.config.num_attention_heads,
                                                      batch_first=True)
         self.resampler = nn.TransformerDecoder(resampler_layer, num_layers=args.n_resampler_layer)
-        ### todo: add type embedding and position embedding
-        # linear projection from vit to rkwv
+        # instruction indendent query
+        self.query = nn.Parameter(torch.zeros(args.n_resampler_query, self.vit.config.hidden_size))
+        nn.init.trunc_normal_(self.query, std=0.02)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
-        # register diag mask
-        self.register_buffer("diag_mask", torch.eye(args.n_resampler_query, dtype=torch.bool))
+        # instruction dependent query
+        # self.resampler_proj = nn.Linear(self.vit.config.hidden_size, self.vit.config.hidden_size, bias=False)
+        # # linear projection from rwkv to vit, then vit to rkwv
+        # self.rwkv2vit_proj = nn.Linear(args.n_embd, self.vit.config.hidden_size, bias=False)
+        # self.vit2rwkv_proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -382,8 +386,10 @@ class VisualRWKV(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        trainable_params = [p for p in self.rwkv.parameters() if p.requires_grad]
-        trainable_params += [p for p in self.proj.parameters() if p.requires_grad]
+        trainable_params = [p for p in self.parameters() if p.requires_grad]
+        name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
+        rank_zero_info(f"Name of trainable parameters in optimizers: {name_of_trainable_params}")
+        rank_zero_info(f"Number of trainable parameters in optimizers: {len(trainable_params)}")
         optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
         if self.deepspeed_offload:
             return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
@@ -407,7 +413,28 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
     
-    def encode_images(self, images, query):
+    def encode_images(self, images):
+        B, N, C, H, W = images.shape
+        images = images.view(B*N, C, H, W)
+        image_features = self.vit(images).last_hidden_state
+        L, D = image_features.shape[1], image_features.shape[2]
+        # # rerange [B*N, L, D] -> [B, N, L, D]
+        # image_features = image_features.view(B, N, L, D)
+        # # add type embedding
+        # image_features = image_features + self.resampler_type_embed[:, :N].unsqueeze(2)
+        # # add position embedding -> [B, N*L, D]
+        # image_features = image_features.view(B, N*L, D) + self.resampler_pos_embed[:, :L*N]
+
+        # rerange [B*N, L, D] -> [B, L*N, D]
+        image_features = image_features.view(B, L*N, D)
+
+        # resample
+        diag_mask = torch.eye(self.args.n_resampler_query, dtype=torch.bool, device=image_features.device)
+        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features, tgt_mask=diag_mask)
+        image_features = self.proj(image_features) # [B, Q, n_embd]
+        return image_features
+    
+    def encode_images2(self, images, input_embeds):
         B, N, C, H, W = images.shape
         images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
@@ -415,13 +442,30 @@ class VisualRWKV(pl.LightningModule):
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)
         # add type embedding
-        image_features = image_features + self.resampler_type_embed[:, :N]
+        image_features = image_features + self.resampler_type_embed[:, :N].unsqueeze(2)
         # add position embedding -> [B, N*L, D]
         image_features = image_features.view(B, N*L, D) + self.resampler_pos_embed[:, :L*N]
-        # resample, use diagonal mask to avoid attention between query tokens
-        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features, tgt_is_causal=True)
-        image_features = self.proj(image_features) # [B, Q, n_embd]
-        return image_features
+        # apply linear projection to merge type embedding and position embedding with image features
+        image_features = self.resampler_proj(image_features) # [B, N*L, n_embd]
+        # linear projection from rwkv to vit
+        input_embeds = self.rwkv2vit_proj(input_embeds)
+        # resample, use causal mask. The masked positions are filled with float(‘-inf’). Unmasked positions are filled with float(0.0).
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(input_embeds.size(1), 
+                                                                  device=input_embeds.device,
+                                                                  dtype=input_embeds.dtype)
+        input_embeds = self.resampler(input_embeds, image_features, tgt_mask=tgt_mask, tgt_is_causal=True)
+        # linear projection from vit to rwkv
+        input_embeds = self.vit2rwkv_proj(input_embeds)
+        return input_embeds
+    
+    def preparing_embedding2(self, samples):
+        # fill IMAGE_TOKEN_INDEX with another token 65535 to avoid change of dataloader
+        input_ids = samples["input_ids"].clone()
+        input_ids[input_ids == IMAGE_TOKEN_INDEX] = 65535
+        input_embeds = self.rwkv.emb(input_ids) # [B, Q, n_embd]
+        new_input_embeds = self.encode_images2(samples["images"], input_embeds)
+        return new_input_embeds, samples["labels"]
+
     
     def preparing_embedding(self, samples):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype

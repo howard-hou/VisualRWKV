@@ -15,6 +15,53 @@ def record_time(name):
         time_slot[name] = tt
 
 
+def gpt4v_crop(image):
+    """
+    Scales and crops an image to fit within 2048x2048, then scales to 768px on the shortest side,
+    and finally crops 512px squares from the resulting image.
+
+    Args:
+        image_path: Path to the image file.
+
+    Returns:
+        A list of PIL Image objects, each representing a 512x512 cropped square.
+    """
+    width, height = image.size
+    # if image is larger than 2048x2048, scale down while maintaining aspect ratio
+    if width > 2048 or height > 2048:
+        if width > height:
+            new_width = 2048
+            new_height = int(2048 * (height / width))
+        else:
+            new_height = 2048
+            new_width = int(2048 * (width / height))
+        image = image.resize((new_width, new_height))
+
+    # Scale such that the shortest side is 768px
+    if new_width < new_height:
+        scale_factor = 768 / new_width
+    else:
+        scale_factor = 768 / new_height
+    new_width = int(new_width * scale_factor)
+    new_height = int(new_height * scale_factor)
+    image = image.resize((new_width, new_height))
+
+    # Crop 512px squares
+    square_size = 512
+    cropped_images = []
+    # if the image is a vertical rectangle, crop the top, middle, bottom
+    if new_height > new_width:
+        for y in [0, (new_height - square_size) // 2, new_height - square_size]:
+            for x in [0, new_width - square_size]:
+                cropped_images.append(image.crop((x, y, x + square_size, y + square_size)))
+    # if the image is a horizontal rectangle, crop the left, middle, right
+    else:
+        for y in [0, new_height - square_size]:
+            for x in [0, (new_width - square_size) // 2, new_width - square_size]:
+                cropped_images.append(image.crop((x, y, x + square_size, y + square_size)))
+    return cropped_images
+
+
 def crop_6_squares(img, resolution):
     '''Crop 6 squares of resolution from the image. 
        short side is resized to 2 * resolution
