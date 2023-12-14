@@ -33,7 +33,7 @@ class train_callback(pl.Callback):
         #     torch.cuda.empty_cache()
         real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
 
-        # LR schedule
+        # LR schedule, cosine with warmup
         w_step = args.warmup_steps
         if args.lr_final == args.lr_init or args.epoch_count == 0:
             lr = args.lr_init
@@ -44,10 +44,9 @@ class train_callback(pl.Callback):
 
             if args.lr_final == 0 or args.lr_init == 0:  # linear decay
                 lr = args.lr_init + (args.lr_final - args.lr_init) * progress
-            else:  # exp decay
-                lr = args.lr_init * math.exp(math.log(args.lr_final / args.lr_init) * pow(progress, 1))
-            # if trainer.is_global_zero:
-            #     print(trainer.global_step, decay_step, decay_total, w_step, progress, lr)
+            else:  # cosine decay
+                cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
+                lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
 
         if trainer.global_step < w_step:
             lr = lr * (0.2 + 0.8 * trainer.global_step / w_step)
