@@ -49,7 +49,7 @@ class train_callback(pl.Callback):
                 lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
 
         if trainer.global_step < w_step:
-            lr = lr * (0.2 + 0.8 * trainer.global_step / w_step)
+            lr = lr * (0.1 + 0.9 * trainer.global_step / w_step)
 
         if args.weight_decay_final > 0:
             wd_now = args.weight_decay * math.exp(math.log(args.weight_decay_final / args.weight_decay) * progress)
