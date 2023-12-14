@@ -10,7 +10,7 @@ from pathlib import Path
 from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation, crop_6_squares
+from src.utils import Conversation, gpt4v_crop
 from transformers import CLIPImageProcessor
 
 
@@ -45,7 +45,7 @@ def eval_model(args):
 
         image = Image.open(image_folder / image_file)
         if args.detail == 'high':
-            image = [image] + crop_6_squares(image, image_processor.crop_size['height'])
+            image = [image] + gpt4v_crop(image)
             image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
             image_tensor = image_tensor.unsqueeze(0)
         else:

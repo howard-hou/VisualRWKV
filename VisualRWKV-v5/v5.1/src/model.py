@@ -345,13 +345,14 @@ class VisualRWKV(pl.LightningModule):
         # resampler, max 4096 tokens and 16 images
         # self.resampler_pos_embed = nn.Parameter(torch.zeros(1, 4096, self.vit.config.hidden_size))
         # self.resampler_type_embed = nn.Parameter(torch.zeros(1, 16, self.vit.config.hidden_size))
-        resampler_layer = nn.TransformerDecoderLayer(d_model=self.vit.config.hidden_size, 
-                                                     nhead=self.vit.config.num_attention_heads,
-                                                     batch_first=True)
-        self.resampler = nn.TransformerDecoder(resampler_layer, num_layers=args.n_resampler_layer)
+        # resampler_layer = nn.TransformerDecoderLayer(d_model=self.vit.config.hidden_size, 
+        #                                              nhead=self.vit.config.num_attention_heads,
+        #                                              batch_first=True)
+        # self.resampler = nn.TransformerDecoder(resampler_layer, num_layers=args.n_resampler_layer)
         # instruction indendent query
         self.query = nn.Parameter(torch.zeros(args.n_resampler_query, self.vit.config.hidden_size))
-        nn.init.trunc_normal_(self.query, std=0.02)
+        nn.init.trunc_normal_(self.query, std=0.0001)
+        self.ln_query = nn.LayerNorm(self.vit.config.hidden_size)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
         # instruction dependent query
         # self.resampler_proj = nn.Linear(self.vit.config.hidden_size, self.vit.config.hidden_size, bias=False)
@@ -418,21 +419,20 @@ class VisualRWKV(pl.LightningModule):
         images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
         L, D = image_features.shape[1], image_features.shape[2]
-        # # rerange [B*N, L, D] -> [B, N, L, D]
-        # image_features = image_features.view(B, N, L, D)
-        # # add type embedding
-        # image_features = image_features + self.resampler_type_embed[:, :N].unsqueeze(2)
-        # # add position embedding -> [B, N*L, D]
-        # image_features = image_features.view(B, N*L, D) + self.resampler_pos_embed[:, :L*N]
-
-        # rerange [B*N, L, D] -> [B, L*N, D]
-        image_features = image_features.view(B, L*N, D)
-
-        # resample
-        diag_mask = torch.eye(self.args.n_resampler_query, dtype=torch.bool, device=image_features.device)
-        image_features = self.resampler(self.query.repeat(B, 1, 1), image_features, tgt_mask=diag_mask)
-        image_features = self.proj(image_features) # [B, Q, n_embd]
-        return image_features
+        # rerange [B*N, L, D] -> [B, N, L, D]
+        image_features = image_features.view(B, N, L, D)
+        global_features = self.proj(image_features[:, 0, :, :]) # [B, L, n_embd]
+        return global_features.mean(dim=1, keepdim=True)
+        # # resample local features
+        # local_features = image_features[:, 1:, :, :].view(B, L*(N-1), D)
+        # query = self.ln_query(self.query.repeat(B, 1, 1)) # [B, Q, D]
+        # attention_score = query @ local_features.transpose(1, 2) # [B, Q, L*(N-1)]
+        # attention_score = F.softmax(attention_score / (D ** 0.5), dim=-1)
+        # local_features = attention_score @ local_features # [B, Q, D]
+        # local_features = self.proj(local_features) # [B, Q, n_embd]
+        # # concat 
+        # image_features = torch.cat((global_features, local_features), dim=1)
+        # return image_features
     
     def encode_images2(self, images, input_embeds):
         B, N, C, H, W = images.shape
@@ -467,7 +467,7 @@ class VisualRWKV(pl.LightningModule):
         return new_input_embeds, samples["labels"]
 
     
-    def preparing_embedding(self, samples):
+    def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
         emb_dtype = samples["images"].dtype
         ### prepare input token
@@ -502,8 +502,9 @@ class VisualRWKV(pl.LightningModule):
             else:
                 raise ValueError(f"Too many images in one sample: {num_images}, should be 0 or 1.")
         # Truncate sequences to max length as image embeddings can make the sequence longer
-        new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
-        new_labels = [x[:self.args.ctx_len] for x in new_labels]
+        if truncate:
+            new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
+            new_labels = [x[:self.args.ctx_len] for x in new_labels]
         # Combine them
         max_len = max(x.shape[0] for x in new_input_embeds)
         batch_size = len(new_input_embeds)
@@ -527,7 +528,7 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels)
+        x, _ = self.preparing_embedding(sampels, truncate=False)
         # generate
         generated = []
         for i in range(max_new_tokens):

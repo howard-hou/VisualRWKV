@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
-from .utils import crop_6_squares
+from .utils import gpt4v_crop
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
@@ -152,10 +152,10 @@ class MyDataset(Dataset):
             processor = args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
             if args.detail == 'high':
-                image = [image] + crop_6_squares(image, processor.crop_size['height'])
+                image = [image] + gpt4v_crop(image)
                 image = processor(images=image, return_tensors='pt')['pixel_values']
             else:
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+                image = processor.preprocess(image, return_tensors='pt')['pixel_values']
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
@@ -177,7 +177,7 @@ class MyDataset(Dataset):
                 data_dict['images'] = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
             else:
                 crop_size = args.image_processor.crop_size
-                data_dict['images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
+                data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
         return data_dict
     
 

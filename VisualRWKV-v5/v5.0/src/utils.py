@@ -36,6 +36,9 @@ def gpt4v_crop(image):
             new_height = 2048
             new_width = int(2048 * (width / height))
         image = image.resize((new_width, new_height))
+    else:
+        new_width = width
+        new_height = height
 
     # Scale such that the shortest side is 768px
     if new_width < new_height:
