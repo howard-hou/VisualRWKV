@@ -99,8 +99,7 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
-    parser.add_argument("--n_resampler_query", type=int, default=196)
-    parser.add_argument("--n_resampler_layer", type=int, default=1)
+    parser.add_argument("--grid_size", type=int, default=8) # 0 for no grid, 1 for 1 token(global avg), 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="high")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation
