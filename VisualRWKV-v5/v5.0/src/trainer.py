@@ -31,7 +31,8 @@ class train_callback(pl.Callback):
         args = self.args
         # if args.cuda_cleanup > 0:
         #     torch.cuda.empty_cache()
-        real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
+        # global_step is update step, influence by gradient accumulation
+        real_step = trainer.global_step * args.my_accumulate_grad_batches + args.epoch_begin * args.epoch_steps
 
         # LR schedule, cosine with warmup
         w_step = args.warmup_steps
@@ -48,8 +49,8 @@ class train_callback(pl.Callback):
                 cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
                 lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
 
-        if trainer.global_step < w_step:
-            lr = lr * (0.1 + 0.9 * trainer.global_step / w_step)
+        if real_step < w_step:
+            lr = lr * (0.1 + 0.9 * real_step / w_step)
 
         if args.weight_decay_final > 0:
             wd_now = args.weight_decay * math.exp(math.log(args.weight_decay_final / args.weight_decay) * progress)

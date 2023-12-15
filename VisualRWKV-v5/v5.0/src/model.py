@@ -403,16 +403,19 @@ class VisualRWKV(pl.LightningModule):
         images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
         L, D = image_features.shape[1], image_features.shape[2]
-        # rerange [B*N, L, D] -> [B, N, L-1, D], remove cls token
-        image_features = image_features.view(B, N, L, D)[:, 0, 1:, :]
+        # rerange [B*N, L, D] -> [B, N, L, D]
+        image_features = image_features.view(B, N, L, D)[:, 0, :, :]
         image_features = self.grid_pooling(image_features)
         return self.proj(image_features)
     
     def grid_pooling(self, image_features):
-        if self.args.grid_size == 0: # no grid pooling
+        if self.args.grid_size == -1: # no grid pooling
             return image_features
-        if self.args.grid_size == 1:
+        if self.args.grid_size == 0: # take cls token
+            return image_features[:, 0:1, :]
+        if self.args.grid_size == 1: # global avg pooling
             return image_features.mean(dim=1, keepdim=True)
+        image_features = image_features[:, 1:, :] #drop cls token
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D)
