@@ -415,6 +415,7 @@ class VisualRWKV(pl.LightningModule):
             return image_features[:, 0:1, :]
         if self.args.grid_size == 1: # global avg pooling
             return image_features.mean(dim=1, keepdim=True)
+        cls_features = image_features[:, 0:1, :]
         image_features = image_features[:, 1:, :] #drop cls token
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
@@ -424,7 +425,8 @@ class VisualRWKV(pl.LightningModule):
                                       padding=0,
                                       kernel_size=grid_stride, 
                                       stride=grid_stride)
-        return image_features.permute(0, 2, 3, 1).view(B, -1, D)
+        image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
+        return torch.cat((cls_features, image_features), dim=1)
    
     def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
