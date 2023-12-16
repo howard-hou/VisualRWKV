@@ -16,6 +16,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 IGNORE_INDEX = -100
 IMAGE_TOKEN_INDEX = -200
 DEFAULT_IMAGE_TOKEN = "<image>"
+STOP_TOKEN_INDEX = 261
+DEFAULT_STOP_TOKEN = "\n\n"
 
 
 def process_image_tokens_in_conversations(
@@ -53,7 +55,6 @@ def process_tokens_in_conversations(
 
 def _add_speaker_and_signal(conversations):
     """Add speaker and start/end signal on each round."""
-    END_SIGNAL = "\n\n"
     for sentence in conversations:
         from_str = sentence["from"]
         if from_str.lower() == "human":
@@ -64,7 +65,7 @@ def _add_speaker_and_signal(conversations):
             raise ValueError(f"Unknown speaker: {from_str}, must be human or gpt.")
         
         if sentence["value"]: # for training, add end signal
-            sentence["value"] = (from_str + ": " + sentence["value"] + END_SIGNAL)
+            sentence["value"] = (from_str + ": " + sentence["value"] + DEFAULT_STOP_TOKEN)
         else: # for inference, not add end signal and no whitespace after colon
             sentence["value"] = from_str + ":"
     return conversations

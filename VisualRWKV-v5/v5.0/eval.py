@@ -9,7 +9,8 @@ import torch
 from pathlib import Path
 from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import DEFAULT_IMAGE_TOKEN, process_image_tokens_in_conversations, preprocess
+from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
+from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop
 from transformers import CLIPImageProcessor
 
@@ -25,6 +26,7 @@ def eval_model(args):
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    stop_token_id = tokenizer.encode("\n\n")[0]
 
     questions = [json.loads(q) for q in open(args.question_file)]
     output_file = Path(args.output_file)
@@ -70,9 +72,10 @@ def eval_model(args):
                 do_sample=False,
                 temperature=args.temperature,
                 top_p=args.top_p,
-                max_new_tokens=128)
+                max_new_tokens=args.max_new_tokens,
+                stop_token_idx=STOP_TOKEN_INDEX)
 
-        output = tokenizer.decode(output_ids).split('\n\n')[0]
+        output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
 
         out_file.write(json.dumps({"question_id": idx,
                                    "prompt": cur_prompt,
@@ -109,6 +112,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_file", type=str, default=None)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=None)
+    parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     #

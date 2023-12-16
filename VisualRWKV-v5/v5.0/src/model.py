@@ -477,7 +477,7 @@ class VisualRWKV(pl.LightningModule):
             new_labels_padded[i, :cur_len] = cur_new_labels
         return new_input_embeds_padded, new_labels_padded
     
-    def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens) -> list[int]:
+    def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
         # input_ids: [1, seq_len]
         # images: [1, 3, 224, 224]
@@ -500,6 +500,8 @@ class VisualRWKV(pl.LightningModule):
                 # [1, vocab_size] -> [1, 1]
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
             generated.append(next_token.item())
+            if generated[-1] == stop_token_idx:
+                break
             x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
             x = x[:, -self.args.ctx_len:, :] # truncate
         return generated
