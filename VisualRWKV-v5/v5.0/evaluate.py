@@ -15,6 +15,54 @@ from src.utils import Conversation, gpt4v_crop
 from transformers import CLIPImageProcessor
 
 
+def load_questions(file_path):
+    file_path = Path(file_path)
+    suffix = file_path.suffix
+    if suffix == ".jsonl":
+        questions = [json.loads(q) for q in open(file_path)]
+    elif suffix == ".json":
+        questions = json.load(open(file_path))
+    else:
+        raise ValueError("Unsupported file type: {}".format(suffix))
+    return questions
+
+
+def get_question_id(line):
+    if "question_id" in line:
+        return line["question_id"]
+    elif "id" in line:
+        return line["id"]
+    else:
+        raise ValueError("Cannot find question id in line: {}".format(line))
+    
+
+def get_input_text(line):
+    if "text" in line:
+        return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
+    elif "conversations" in line:
+        return line["conversations"][0]["value"]
+    else:
+        raise ValueError("Cannot find input text in line: {}".format(line))
+    
+def get_input_image_tensor(line, image_folder, image_processor, detail):
+    if "image" in line:
+        image_file = line["image"]
+        image = Image.open(image_folder / image_file)
+        if args.detail == 'high':
+            image = [image] + gpt4v_crop(image)
+            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
+        else:
+            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+    else:
+        # image does not exist in the data, fill with zeros
+        if detail == 'high':
+            crop_size = image_processor.crop_size
+            image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
+        else:
+            crop_size = args.image_processor.crop_size
+            image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+    return image_tensor
+
 def eval_model(args):
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
@@ -26,33 +74,25 @@ def eval_model(args):
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
-    stop_token_id = tokenizer.encode("\n\n")[0]
 
-    questions = [json.loads(q) for q in open(args.question_file)]
+    questions = load_questions(args.question_file)
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     image_folder = Path(args.image_folder)
 
     out_file = open(output_file, "w")
     for line in tqdm(questions):
-        idx = line["question_id"]
-        image_file = line["image"]
-        qs = DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
+        idx = get_question_id(line)
+        input_text = get_input_text(line)
 
         conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
-        conv.append_message(conv.roles[0], qs)
+        conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
         conversations = process_image_tokens_in_conversations(conv.conversations)
 
-        image = Image.open(image_folder / image_file)
-        if args.detail == 'high':
-            image = [image] + gpt4v_crop(image)
-            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
-            image_tensor = image_tensor.unsqueeze(0)
-        else:
-            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
-        image_tensor = image_tensor.bfloat16().to(args.device)
+        image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
+        image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
 
         data_dict = preprocess(
             conversations,
@@ -82,7 +122,7 @@ def eval_model(args):
                                    "text": output,
                                    "model_id": model_name,
                                    "metadata": {
-                                       "image_file": image_file,
+                                       "image_file": line.get("image", None),
                                    }}, ensure_ascii=False) + "\n")
         out_file.flush()
     out_file.close()

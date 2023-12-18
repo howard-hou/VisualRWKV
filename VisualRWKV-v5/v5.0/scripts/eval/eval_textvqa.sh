@@ -8,7 +8,7 @@ parent_dir=$(dirname "${model_path}")
 exp_name=$(basename "${parent_dir}")
 echo "exp name: $exp_name, model path: $model_path, ctx len: $ctx_len, grid size: $grid_size"
 
-python eval.py \
+python evaluate.py \
     --ctx_len $ctx_len --grid_size $grid_size \
     --vision_tower_name /houhaowen/huggingface_models/openai/clip-vit-large-patch14-336 \
     --model_path $model_path \

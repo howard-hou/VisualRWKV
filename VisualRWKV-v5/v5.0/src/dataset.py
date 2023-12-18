@@ -2,14 +2,14 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-import json, math, random, os, re, copy
+import json, os, re, copy
 import numpy as np
 from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
-from .utils import gpt4v_crop
+from .utils import gpt4v_crop, largest_3n_plus_2_prime
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
@@ -138,17 +138,24 @@ class MyDataset(Dataset):
         self.tokenizer = args.tokenizer
         self.list_data_dict = json.load(open(args.data_file, "r"))
         self.data_size = len(self.list_data_dict)
+        self.magic_prime = largest_3n_plus_2_prime(self.data_size)
+        self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
 
     def __len__(self):
-        return self.args.epoch_steps * self.args.micro_bsz
+        return self.samples_per_epoch
 
     def __getitem__(self, idx):
         args = self.args
-        # replace idx with random index
-        idx = random.randrange(self.data_size)
-        sample = self.list_data_dict[idx]
+        rank = self.global_rank
+        epoch = self.real_epoch
+        world_size = self.world_size
+        step = epoch * self.samples_per_epoch + (idx * world_size) + rank
+        # use a magic prime to sample the dataset deterministically yet randomly enough
+        sample_idx = (step * step * step) % self.magic_prime
+        # print(f"step {step} sample idx {sample_idx} epoch {epoch} idx {idx} rank {rank}/{world_size} magic prime {self.magic_prime}")
+        sample = self.list_data_dict[sample_idx]
         if 'image' in sample:
-            image_file = self.list_data_dict[idx]['image']
+            image_file = sample['image']
             image_folder = args.image_folder
             processor = args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
