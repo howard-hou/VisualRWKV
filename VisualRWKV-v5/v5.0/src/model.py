@@ -302,8 +302,8 @@ class RWKV(pl.LightningModule):
 
     def forward(self, x):
         args = self.args
-        B, T, D = x.size()
-        assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+        # B, T, D = x.size()
+        # assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
         if args.dropout > 0:
             x = self.drop0(x)
