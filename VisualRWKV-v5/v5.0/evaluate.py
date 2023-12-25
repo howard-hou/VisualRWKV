@@ -15,6 +15,17 @@ from src.utils import Conversation, gpt4v_crop
 from transformers import CLIPImageProcessor
 
 
+def split_list(lst, n):
+    """Split a list into n (roughly) equal-sized chunks"""
+    chunk_size = math.ceil(len(lst) / n)  # integer division
+    return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+
+
+def get_chunk(lst, n, k):
+    chunks = split_list(lst, n)
+    return chunks[k]
+
+
 def load_questions(file_path):
     file_path = Path(file_path)
     suffix = file_path.suffix
@@ -76,6 +87,7 @@ def eval_model(args):
     image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
 
     questions = load_questions(args.question_file)
+    questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     image_folder = Path(args.image_folder)
@@ -153,6 +165,8 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=128)
+    parser.add_argument("--num_chunks", type=int, default=1)
+    parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     #
