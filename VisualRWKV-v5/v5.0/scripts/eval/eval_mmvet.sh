@@ -18,6 +18,6 @@ python evaluate.py \
 
 mkdir -p /houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/eval/mm-vet/results
 
-python scripts/convert_mmvet_for_eval.py \
+python eval/convert_mmvet_for_eval.py \
     --src /houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/eval/mm-vet/outputs/$exp_name.jsonl \
     --dst /houhaowen/huggingface_datasets/liuhaotian/LLaVA-Instruct-150K/eval/mm-vet/results/$exp_name.json
