@@ -3,6 +3,9 @@ import numpy as np
 import dataclasses
 from torch.nn import functional as F
 from typing import List, Dict
+from PIL import Image
+from io import BytesIO
+import base64
 
 time_slot = {}
 time_ref = time.time_ns()
@@ -13,6 +16,10 @@ def record_time(name):
     tt = (time.time_ns() - time_ref) / 1e9
     if tt < time_slot[name]:
         time_slot[name] = tt
+
+
+def load_image_from_base64(image):
+    return Image.open(BytesIO(base64.b64decode(image)))
 
 
 def largest_3n_plus_2_prime(x):

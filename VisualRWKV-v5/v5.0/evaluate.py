@@ -3,6 +3,7 @@ os.environ["RWKV_JIT_ON"] = "1"
 
 import json
 from PIL import Image
+import pandas as pd
 import math
 import argparse
 import torch
@@ -11,7 +12,7 @@ from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation, gpt4v_crop
+from src.utils import Conversation, gpt4v_crop, load_image_from_base64
 from transformers import CLIPImageProcessor
 
 
@@ -25,6 +26,17 @@ def get_chunk(lst, n, k):
     chunks = split_list(lst, n)
     return chunks[k]
 
+def is_none(value):
+    if value is None:
+        return True
+    if type(value) is float and math.isnan(value):
+        return True
+    if type(value) is str and value.lower() == 'nan':
+        return True
+    if type(value) is str and value.lower() == 'none':
+        return True
+    return False
+
 
 def load_questions(file_path):
     file_path = Path(file_path)
@@ -33,6 +45,8 @@ def load_questions(file_path):
         questions = [json.loads(q) for q in open(file_path)]
     elif suffix == ".json":
         questions = json.load(open(file_path))
+    elif suffix == ".tsv":
+        questions = pd.read_table(file_path).to_dict("records")
     else:
         raise ValueError("Unsupported file type: {}".format(suffix))
     return questions
@@ -43,22 +57,59 @@ def get_question_id(line):
         return line["question_id"]
     elif "id" in line:
         return line["id"]
+    elif "index" in line:
+        return line["index"]
     else:
         raise ValueError("Cannot find question id in line: {}".format(line))
+
+
+def get_options(line, options):
+    parsed_options = []
+    for option in options:
+        option_value = line[option]
+        if is_none(option_value):
+            break
+        parsed_options.append(option_value)
+    return parsed_options
+
+
+def get_input_text_mmbench(line, lang='en'):
+    all_options = ['A', 'B', 'C', 'D']
+    options = get_options(line, all_options)
+    question = line['question']
+    hint = line['hint']
+    if not is_none(hint):
+        question = hint + '\n' + question
+    for option_char, option in zip(all_options[:len(options)], options):
+        question = question + '\n' + option_char + '. ' + option
+    question = DEFAULT_IMAGE_TOKEN + '\n' + question
+    if lang == 'cn':
+        question = question + '\n' + "请直接回答选项字母。"
+    else:
+        question = question + '\n' + "Answer with the option's letter from the given choices directly."
+    return question
     
 
-def get_input_text(line):
-    if "text" in line:
-        return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
-    elif "conversations" in line:
-        return line["conversations"][0]["value"]
+def get_input_text(line, dataset_name):
+    if dataset_name == "mmbench":
+        return get_input_text_mmbench(line)
+    elif dataset_name == "mmbench_cn":
+        return get_input_text_mmbench(line, lang='cn')
     else:
-        raise ValueError("Cannot find input text in line: {}".format(line))
+        if "text" in line:
+            return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
+        elif "conversations" in line:
+            return line["conversations"][0]["value"]
+        else:
+            raise ValueError("Cannot find input text in line: {}".format(line))
     
 def get_input_image_tensor(line, image_folder, image_processor, detail):
     if "image" in line:
         image_file = line["image"]
-        image = Image.open(image_folder / image_file)
+        if image_folder is not None:
+            image = Image.open(image_folder / image_file)
+        else: # image is base64 encoded
+            image = load_image_from_base64(image_file)
         if args.detail == 'high':
             image = [image] + gpt4v_crop(image)
             image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
@@ -90,12 +141,12 @@ def eval_model(args):
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    image_folder = Path(args.image_folder)
+    image_folder = Path(args.image_folder) if args.image_folder is not None else None
 
     out_file = open(output_file, "w")
     for line in tqdm(questions):
         idx = get_question_id(line)
-        input_text = get_input_text(line)
+        input_text = get_input_text(line, dataset_name=args.dataset_name)
 
         conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
         conv.append_message(conv.roles[0], input_text)
@@ -168,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_chunks", type=int, default=1)
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--dataset_name", type=str, default="default")
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
