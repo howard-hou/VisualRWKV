@@ -2,6 +2,7 @@ import os
 import json
 import argparse
 import pandas as pd
+from pathlib import Path
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -14,7 +15,8 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
-
+    upload_dir = Path(args.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
     df = pd.read_table(args.annotation_file)
 
     cur_df = df.copy()
@@ -24,4 +26,4 @@ if __name__ == "__main__":
         pred = json.loads(pred)
         cur_df.loc[df['index'] == pred['question_id'], 'prediction'] = pred['text']
 
-    cur_df.to_excel(os.path.join(args.upload_dir, f"{args.experiment}.xlsx"), index=False, engine='openpyxl')
+    cur_df.to_excel(upload_dir / f"{args.experiment}.xlsx", index=False, engine='openpyxl')
