@@ -368,6 +368,11 @@ class VisualRWKV(pl.LightningModule):
             else:
                 for p in block.parameters():
                     p.requires_grad_(True)
+        # freeze embedding if num_layers_to_freeze != 0
+        if num_layers_to_freeze == 0:
+            self.rwkv.emb.requires_grad_(True)
+        else:
+            self.rwkv.emb.requires_grad_(False)
 
 
     def configure_optimizers(self):

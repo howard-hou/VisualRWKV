@@ -1,63 +1,19 @@
 import gradio as gr
-import os, gc, copy, torch
+import os, gc
 from datetime import datetime
 from huggingface_hub import hf_hub_download
-from transformers import CLIPVisionModel
-import torch.nn as nn
-import torch.nn.functional as F
-from pynvml import *
-nvmlInit()
-gpu_h = nvmlDeviceGetHandleByIndex(0)
+
 ctx_limit = 3500
-title = "RWKV-5-World-1B5-v2-20231025-ctx4096"
+title = "rwkv1b5-vitl336p14-577token_mix665k_rwkv"
 
 os.environ["RWKV_JIT_ON"] = '1'
-os.environ["RWKV_CUDA_ON"] = '1' # if '1' then use CUDA kernel for seq mode (much faster)
+os.environ["RWKV_CUDA_ON"] = '0' # if '1' then use CUDA kernel for seq mode (much faster)
 
 from rwkv.model import RWKV
-model_path = hf_hub_download(repo_id="BlinkDL/rwkv-5-world", filename=f"{title}.pth")
-model = RWKV(model=model_path, strategy='cuda fp16')
+model_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=f"{title}.pth")
+model = RWKV(model=model_path, strategy='cpu fp32')
 from rwkv.utils import PIPELINE, PIPELINE_ARGS
 pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
-
-
-class VisualRWKV(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
-        self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
-
-    def encode_images(self, images):
-        B, N, C, H, W = images.shape
-        images = images.view(B*N, C, H, W)
-        image_features = self.vit(images).last_hidden_state
-        L, D = image_features.shape[1], image_features.shape[2]
-        # rerange [B*N, L, D] -> [B, N, L, D]
-        image_features = image_features.view(B, N, L, D)[:, 0, :, :]
-        image_features = self.grid_pooling(image_features)
-        return self.proj(image_features)
-    
-    def grid_pooling(self, image_features):
-        if self.args.grid_size == -1: # no grid pooling
-            return image_features
-        if self.args.grid_size == 0: # take cls token
-            return image_features[:, 0:1, :]
-        if self.args.grid_size == 1: # global avg pooling
-            return image_features.mean(dim=1, keepdim=True)
-        cls_features = image_features[:, 0:1, :]
-        image_features = image_features[:, 1:, :] #drop cls token
-        B, L, D = image_features.shape
-        H_or_W = int(L**0.5)
-        image_features = image_features.view(B, H_or_W, H_or_W, D)
-        grid_stride = H_or_W // self.args.grid_size
-        image_features = F.avg_pool2d(image_features.permute(0, 3, 1, 2), 
-                                      padding=0,
-                                      kernel_size=grid_stride, 
-                                      stride=grid_stride)
-        image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
-        return torch.cat((cls_features, image_features), dim=1)
-
 
 ##########################################################################
 
@@ -121,13 +77,9 @@ def evaluate(
             yield out_str.strip()
             out_last = i + 1
 
-    gpu_info = nvmlDeviceGetMemoryInfo(gpu_h)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f'{timestamp} - vram {gpu_info.total} used {gpu_info.used} free {gpu_info.free}')
     del out
     del state
     gc.collect()
-    torch.cuda.empty_cache()
     yield out_str.strip()
 
 examples = [
@@ -155,7 +107,7 @@ Edward:''', 333, 1, 0.3, 0, 1],
 ##########################################################################
 
 with gr.Blocks(title=title) as demo:
-    gr.HTML(f"<div style=\"text-align: center;\">\n<h1>RWKV-5 World v2 - {title}</h1>\n</div>")
+    gr.HTML(f"<div style=\"text-align: center;\">\n<h1>VisualRWKV-5.0 - {title}</h1>\n</div>")
     with gr.Tab("Raw Generation"):
         gr.Markdown(f"This is [RWKV-5 World v2](https://huggingface.co/BlinkDL/rwkv-5-world) with 1.5B params - a 100% attention-free RNN [RWKV-LM](https://github.com/BlinkDL/RWKV-LM). Supports all 100+ world languages and code. And we have [200+ Github RWKV projects](https://github.com/search?o=desc&p=1&q=rwkv&s=updated&type=Repositories). *** Please try examples first (bottom of page) *** (edit them to use your question). Demo limited to ctxlen {ctx_limit}.")
         with gr.Row():
@@ -171,7 +123,9 @@ with gr.Blocks(title=title) as demo:
                     submit = gr.Button("Submit", variant="primary")
                     clear = gr.Button("Clear", variant="secondary")
                 output = gr.Textbox(label="Output", lines=5)
-        data = gr.Dataset(components=[prompt, token_count, temperature, top_p, presence_penalty, count_penalty], samples=examples, label="Example Instructions", headers=["Prompt", "Max Tokens", "Temperature", "Top P", "Presence Penalty", "Count Penalty"])
+        data = gr.Dataset(components=[prompt, token_count, temperature, top_p, presence_penalty, count_penalty], 
+                          samples=examples, label="Example Instructions", 
+                          headers=["Prompt", "Max Tokens", "Temperature", "Top P", "Presence Penalty", "Count Penalty"])
         submit.click(evaluate, [prompt, token_count, temperature, top_p, presence_penalty, count_penalty], [output])
         clear.click(lambda: None, [], [output])
         data.click(lambda x: x, [data], [prompt, token_count, temperature, top_p, presence_penalty, count_penalty])
