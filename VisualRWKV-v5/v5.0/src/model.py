@@ -374,6 +374,8 @@ class VisualRWKV(pl.LightningModule):
         else:
             self.rwkv.emb.requires_grad_(False)
 
+    def freeze_proj(self):
+        self.proj.requires_grad_(False)
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.parameters() if p.requires_grad]
