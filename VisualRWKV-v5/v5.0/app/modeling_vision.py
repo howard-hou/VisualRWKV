@@ -2,8 +2,15 @@ from transformers import CLIPVisionModel
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dataclasses import dataclass
 
-class VisualRWKV(nn.Module):
+@dataclass
+class VisionEncoderConfig:
+    n_embd: int = 2048
+    vision_tower_name: str = 'openai/clip-vit-large-patch14-336'
+    grid_size: int = -1 # -1: no grid pooling, 0: take cls token, 1: global avg pooling, 2, 3, 4, ...: grid pooling
+
+class VisionEncoder(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
