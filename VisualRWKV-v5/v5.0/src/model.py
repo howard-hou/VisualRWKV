@@ -394,9 +394,16 @@ class VisualRWKV(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
+        # Apply mask to remove NaN and inf values
+        logits[(torch.isnan(logits) | torch.isinf(logits))] = 0.0
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
-        loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), 
+                               shift_labels.view(-1),
+                               reduction='none')
+        # Apply mask to remove NaN and inf values
+        loss[(torch.isnan(loss) | torch.isinf(loss))] = 0.0
+        loss = loss.mean()
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):
