@@ -194,7 +194,7 @@ if __name__ == "__main__":
     from src.model import VisualRWKV
     model = VisualRWKV(args)
     if args.model_path:
-        msg = model.load_state_dict(torch.load(args.model_path), strict=False)
+        msg = model.load_state_dict(torch.load(args.model_path, map_location='cpu'), strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv(args.freeze_rwkv)

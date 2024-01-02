@@ -142,7 +142,7 @@ class MyDataset(Dataset):
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
 
     def __len__(self):
-        return self.samples_per_epoch
+        return self.args.epoch_steps
 
     def __getitem__(self, idx):
         args = self.args
