@@ -203,12 +203,8 @@ visual_examples = [
         "what is the name of this bird?",
     ],
     [
-        f"{cur_dir}/examples_extreme_ironing.jpg",
-        "What is unusual about this image?",
-    ],
-    [
-        f"{cur_dir}/examples_waterview.jpg",
-        "What are the things I should be cautious about when I visit here?",
+        f"{cur_dir}/examples_woman_and_dog.png",
+        "describe this image",
     ],
 ]
 
@@ -228,8 +224,7 @@ def compute_image_state(image):
     if base64_image in image_cache:
         image_state = image_cache[base64_image]
     else:
-        image = image_processor(images=image.convert('RGB'), return_tensors='pt')['pixel_values']
-        image = image.to(device)
+        image = image_processor(images=image.convert('RGB'), return_tensors='pt')['pixel_values'].to(device)
         image_features = visual_encoder.encode_images(image.unsqueeze(0)).squeeze(0) # [L, D]
         # apply layer norm to image feature, very important
         image_features = F.layer_norm(image_features, 
