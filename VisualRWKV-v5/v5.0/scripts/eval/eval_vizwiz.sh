@@ -19,12 +19,11 @@ python evaluate.py \
     --ctx_len $ctx_len --grid_size $grid_size --n_embd $n_embd --n_layer $n_layer \
     --vision_tower_name $vision_tower_path \
     --model_path $model_path \
-    --image_folder $eval_dir/eval/scienceqa/images/test \
-    --question_file $eval_dir/eval/scienceqa/llava_test_CQM-A.json \
-    --output_file $eval_dir/eval/scienceqa/answers/$exp_name.jsonl
+    --image_folder $eval_dir/eval/vizwiz/test \
+    --question_file $eval_dir/eval/vizwiz/llava_test.jsonl \
+    --output_file $eval_dir/eval/vizwiz/answers/$exp_name.jsonl
 
-python eval/eval_science_qa.py \
-    --base-dir $eval_dir/eval/scienceqa \
-    --result-file $eval_dir/eval/scienceqa/answers/$exp_name.jsonl \
-    --output-file $eval_dir/eval/scienceqa/answers/$exp_name_output.jsonl \
-    --output-result $eval_dir/eval/scienceqa/answers/$exp_name_result.json
+python eval/convert_vizwiz_for_submission.py \
+    --annotation-file $eval_dir/eval/vizwiz/llava_test.jsonl \
+    --result-file $eval_dir/eval/vizwiz/answers/$exp_name.jsonl \
+    --result-upload-file $eval_dir/eval/vizwiz/answers_upload/$exp_name.json
