@@ -131,7 +131,7 @@ def eval_model(args):
     model_name = model_path.parent.name
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path))
+    msg = model.load_state_dict(torch.load(model_path), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
