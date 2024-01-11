@@ -396,12 +396,8 @@ class VisualRWKV(pl.LightningModule):
         logits, targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
-        # 多卡会有bug，loss会变成nan, 所以reduction='none'
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
-                               shift_labels.view(-1),
-                               reduction='none')
-        # ignore tokens with label -100
-        loss = loss[loss != 0.0].mean()
+                               shift_labels.view(-1))
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):

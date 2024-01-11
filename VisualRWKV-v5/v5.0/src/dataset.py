@@ -90,8 +90,9 @@ def mask_targets_from_human(targets, tokenized_lens, speakers):
         cur_idx += tokenized_len
 
 def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
-    input_ids = input_ids[:max_len]
-    targets = targets[:max_len]
+    # keep the last max_len targets, because a lot of first tokens are masked
+    input_ids = input_ids[-max_len:]
+    targets = targets[-max_len:]
     padding_len = max_len - len(input_ids)
     if padding_len <= 0:
         return input_ids, targets
