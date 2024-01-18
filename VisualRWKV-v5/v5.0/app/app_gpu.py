@@ -37,7 +37,7 @@ config = VisionEncoderConfig(n_embd=model.args.n_embd,
 visual_encoder = VisionEncoder(config)
 vision_local_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=vision_remote_path)
 vision_state_dict = torch.load(vision_local_path, map_location='cpu')
-visual_encoder.load_state_dict(vision_state_dict)
+visual_encoder.load_state_dict(vision_state_dict, strict=False)
 image_processor = CLIPImageProcessor.from_pretrained(vision_tower_name)
 visual_encoder = visual_encoder.to(device)
 ##########################################################################

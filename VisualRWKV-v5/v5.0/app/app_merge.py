@@ -121,13 +121,13 @@ visual_rwkv = RWKV(model=model_path, strategy='cuda fp16')
 
 ##########################################################################
 from modeling_vision import VisionEncoder, VisionEncoderConfig
-config = VisionEncoderConfig(n_embd=model.args.n_embd, 
+config = VisionEncoderConfig(n_embd=visual_rwkv.args.n_embd, 
                              vision_tower_name=vision_tower_name, 
                              grid_size=-1)
 visual_encoder = VisionEncoder(config)
 vision_local_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=vision_remote_path)
 vision_state_dict = torch.load(vision_local_path, map_location='cpu')
-visual_encoder.load_state_dict(vision_state_dict)
+visual_encoder.load_state_dict(vision_state_dict, strict=False)
 image_processor = CLIPImageProcessor.from_pretrained(vision_tower_name)
 visual_encoder = visual_encoder.to(device)
 ##########################################################################
@@ -217,8 +217,8 @@ def pil_image_to_base64(pil_image):
     return base64_image
 
 image_cache = {}
-ln0_weight = model.w['blocks.0.ln0.weight'].to(torch.float32).to(device)
-ln0_bias = model.w['blocks.0.ln0.bias'].to(torch.float32).to(device)
+ln0_weight = visual_rwkv.w['blocks.0.ln0.weight'].to(torch.float32).to(device)
+ln0_bias = visual_rwkv.w['blocks.0.ln0.bias'].to(torch.float32).to(device)
 def compute_image_state(image):
     base64_image = pil_image_to_base64(image)
     if base64_image in image_cache:
@@ -231,7 +231,7 @@ def compute_image_state(image):
                                     (image_features.shape[-1],), 
                                     weight=ln0_weight, 
                                     bias=ln0_bias)
-        _, image_state = model.forward(embs=image_features, state=None)
+        _, image_state = visual_rwkv.forward(embs=image_features, state=None)
         image_cache[base64_image] = image_state
     return image_state
 
@@ -241,7 +241,7 @@ def chatbot(image, question):
         return
     image_state = compute_image_state(image)
     input_text = visual_generate_prompt(question)
-    for output in generate(input_text, image_state):
+    for output in generate(input_text, image_state, temperature=1.0):
         yield output
 
 
