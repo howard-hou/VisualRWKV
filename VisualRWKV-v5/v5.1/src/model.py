@@ -343,6 +343,8 @@ class VisualRWKV(pl.LightningModule):
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        self.align = ContrastiveAlignment(self.proj, args.queue_size, 
+                                          args.ctx_len, args.vision_ctx_len, args.n_embd)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -388,7 +390,9 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets = self.preparing_embedding(samples)
+        image_features  = self.encode_images(samples["images"], do_proj=False)
+        image_features_projected = self.proj(image_features)
+        x, targets = self.preparing_embedding(samples, image_features_projected)
         logits = self.rwkv(x)
         return logits, targets
     
@@ -406,7 +410,7 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
     
-    def encode_images(self, images):
+    def encode_images(self, images, do_proj=True):
         B, N, C, H, W = images.shape
         images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
@@ -414,7 +418,9 @@ class VisualRWKV(pl.LightningModule):
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)[:, 0, :, :]
         image_features = self.grid_pooling(image_features)
-        return self.proj(image_features)
+        if do_proj:
+            return self.proj(image_features)
+        return image_features
     
     def grid_pooling(self, image_features):
         if self.args.grid_size == -1: # no grid pooling
@@ -436,12 +442,10 @@ class VisualRWKV(pl.LightningModule):
         image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
         return torch.cat((cls_features, image_features), dim=1)
    
-    def preparing_embedding(self, samples, truncate=True):
+    def preparing_embedding(self, samples, image_features, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
         emb_dtype = samples["images"].dtype
         ### prepare input token
-        image_features  = self.encode_images(samples["images"])
-        # 
         new_input_embeds = []
         new_labels = []
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
@@ -526,32 +530,32 @@ class ContrastiveAlignment(nn.Moduleo):
         self.text_max_len = text_max_len
         self.vision_max_len = vision_max_len
         self.embed_dim = embed_dim
-        self.align_head = nn.Linear(embed_dim, 2) 
         self.register_buffer("text_queue", torch.zeros(queue_size, text_max_len, embed_dim))
         self.register_buffer("vision_queue", torch.zeros(queue_size, vision_max_len, embed_dim))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
-    def forward(self, text_embeds, vision_embeds):
+    def forward(self, text_embeds, vision_embeds, text_masks):
         # text_embeds: [batch_size, text_max_len, embed_dim]
         # vision_embeds: [batch_size, vision_max_len, embed_dim]
         batch_size = text_embeds.shape[0]
-        # concat queue and current batch
-        text_features = torch.cat((text_embeds, self.text_queue), dim=0)
-        vision_features = torch.cat((vision_embeds, self.vision_queue), dim=0)
         # project to the same space
-        vision_features = self.proj(vision_features)
-        # generate labels, 1 for current batch, 0 for queue
-        labels = torch.cat((torch.ones(batch_size, dtype=torch.long), torch.zeros(self.queue_size, dtype=torch.long)), dim=0)
-        # compute alignment by SCALED_DOT_PRODUCT_ATTENTION
-        text2vision_alignment = F.scaled_dot_product_attention(text_features, vision_features, vision_features)
-        vision2text_alignment = F.scaled_dot_product_attention(vision_features, text_features, text_features)
+        vision_features = self.proj(vision_embeds)
+        vision_neg_features = self.proj(self.vision_queue.clone().detach())
+        # compute logits
+        # positive logits: Nx1
+        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features).mean(dim=-1, keepdim=True)
+        # negative text logits: NxK
+        neg_text_logits = torch.einsum('nc,ck->nk', text_embeds, vision_neg_features)
+        # negative vision logits: NxK
+        neg_vision_logits = torch.einsum('nc,ck->nk', vision_features, self.text_queue.clone().detach())
+        # logits: [batch_size, 1+K+K]
+        logits = torch.cat((pos_logits, neg_text_logits, neg_vision_logits), dim=-1)
+        # labels: positive key indicators, which is 0
+        labels = torch.zeros(batch_size, dtype=torch.long, device=text_embeds.device)
         # compute loss
-        text2vision_loss = F.cross_entropy(self.align_head(text2vision_alignment), labels)
-        vision2text_loss = F.cross_entropy(self.align_head(vision2text_alignment), labels)
+        loss = F.cross_entropy(logits, labels)
         # update queue
         self.text_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = text_embeds
         self.vision_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = vision_embeds
         self.queue_ptr = (self.queue_ptr + batch_size) % self.queue_size
-        # merge loss
-        loss = (text2vision_loss + vision2text_loss) / 2
         return loss
