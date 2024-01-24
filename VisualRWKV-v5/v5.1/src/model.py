@@ -541,9 +541,13 @@ class ContrastiveAlignment(nn.Moduleo):
         # project to the same space
         vision_features = self.proj(vision_embeds)
         vision_neg_features = self.proj(self.vision_queue.clone().detach())
+        # apply mask, make padding tokens zero
+        text_embeds = text_embeds * text_masks.unsqueeze(-1)
         # compute logits
         # positive logits: Nx1
-        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features).mean(dim=-1, keepdim=True)
+        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features).mean(dim=-1)
+        pos_logits = pos_logits.sum(dim=-1) / text_masks.sum(dim=-1) # average over non-padding tokens
+        pos_logits = pos_logits.unsqueeze(-1) # N -> Nx1
         # negative text logits: NxK
         neg_text_logits = torch.einsum('nc,ck->nk', text_embeds, vision_neg_features)
         # negative vision logits: NxK
