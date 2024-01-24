@@ -54,7 +54,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
-    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
+    parser.add_argument("--grid_size", type=int, default=-1) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
+    parser.add_argument("--queue_size", type=int, default=16) # for contrastive learning
+    parser.add_argument("--vision_ctx_len", type=int, default=577) # number of tokens in vision context
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
@@ -217,7 +219,7 @@ if __name__ == "__main__":
             shape = [i for i in shape if i != 1]
             if len(shape) > 1:
                 print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
-            else:
+            elif len(shape) == 1:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
 
     if "deepspeed" in args.strategy:

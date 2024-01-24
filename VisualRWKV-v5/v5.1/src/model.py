@@ -17,7 +17,7 @@ if importlib.util.find_spec('deepspeed'):
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
-from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
+from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, PAD_TOKEN_INDEX
 
 def __nop(ob):
     return ob
@@ -344,7 +344,8 @@ class VisualRWKV(pl.LightningModule):
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
         self.align = ContrastiveAlignment(self.proj, args.queue_size, 
-                                          args.ctx_len, args.vision_ctx_len, args.n_embd)
+                                          args.ctx_len, args.vision_ctx_len, 
+                                          args.n_embd, self.vit.config.hidden_size)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -390,18 +391,28 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
+        # encode images
         image_features  = self.encode_images(samples["images"], do_proj=False)
         image_features_projected = self.proj(image_features)
+        # prepare embedding
         x, targets = self.preparing_embedding(samples, image_features_projected)
         logits = self.rwkv(x)
-        return logits, targets
+        # compute constraive loss
+        # replace IMAGE_TOKEN_INDEX with PAD_TOKEN_INDEX
+        input_ids = samples["input_ids"].clone()
+        input_ids[input_ids == IMAGE_TOKEN_INDEX] = PAD_TOKEN_INDEX
+        text_masks = (input_ids != PAD_TOKEN_INDEX)
+        text_embeds = self.rwkv.emb(input_ids)
+        constraive_loss = self.align(text_embeds=text_embeds, vision_embeds=image_features, text_masks=text_masks)
+        return logits, targets, constraive_loss
     
     def training_step(self, batch, batch_idx):
-        logits, targets = self(batch)
+        logits, targets, constraive_loss = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
                                shift_labels.view(-1))
+        loss = loss + constraive_loss
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):
@@ -435,6 +446,7 @@ class VisualRWKV(pl.LightningModule):
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D)
         grid_stride = H_or_W // self.args.grid_size
+        assert grid_stride * self.args.grid_size == H_or_W
         image_features = F.avg_pool2d(image_features.permute(0, 3, 1, 2), 
                                       padding=0,
                                       kernel_size=grid_stride, 
@@ -522,16 +534,18 @@ class VisualRWKV(pl.LightningModule):
 ########################################################################################################
 # The constraive alignment module for VisualRWKV
 ########################################################################################################
-class ContrastiveAlignment(nn.Moduleo):
-    def __init__(self, proj, queue_size, text_max_len, vision_max_len, embed_dim):
+class ContrastiveAlignment(nn.Module):
+    def __init__(self, proj, queue_size, text_max_len, vision_max_len, text_embed_dim, vision_embed_dim, reduction='mean'):
         super().__init__()
         self.proj = proj
         self.queue_size = queue_size
         self.text_max_len = text_max_len
         self.vision_max_len = vision_max_len
-        self.embed_dim = embed_dim
-        self.register_buffer("text_queue", torch.zeros(queue_size, text_max_len, embed_dim))
-        self.register_buffer("vision_queue", torch.zeros(queue_size, vision_max_len, embed_dim))
+        self.text_embed_dim = text_embed_dim
+        self.vision_embed_dim = vision_embed_dim
+        self.reduction = reduction
+        self.register_buffer("text_queue", torch.zeros(queue_size, text_max_len, text_embed_dim))
+        self.register_buffer("vision_queue", torch.zeros(queue_size, vision_max_len, vision_embed_dim))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
     def forward(self, text_embeds, vision_embeds, text_masks):
@@ -540,26 +554,55 @@ class ContrastiveAlignment(nn.Moduleo):
         batch_size = text_embeds.shape[0]
         # project to the same space
         vision_features = self.proj(vision_embeds)
-        vision_neg_features = self.proj(self.vision_queue.clone().detach())
+        vision_neg_embeds = self.vision_queue.clone().detach()
+        vision_neg_features = self.proj(vision_neg_embeds)
         # apply mask, make padding tokens zero
         text_embeds = text_embeds * text_masks.unsqueeze(-1)
         # compute logits
         # positive logits: Nx1
-        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features).mean(dim=-1)
-        pos_logits = pos_logits.sum(dim=-1) / text_masks.sum(dim=-1) # average over non-padding tokens
-        pos_logits = pos_logits.unsqueeze(-1) # N -> Nx1
+        pos_logits = self.compute_pos_logits(text_embeds, vision_features, text_masks)
         # negative text logits: NxK
-        neg_text_logits = torch.einsum('nc,ck->nk', text_embeds, vision_neg_features)
-        # negative vision logits: NxK
-        neg_vision_logits = torch.einsum('nc,ck->nk', vision_features, self.text_queue.clone().detach())
-        # logits: [batch_size, 1+K+K]
-        logits = torch.cat((pos_logits, neg_text_logits, neg_vision_logits), dim=-1)
+        neg_logits = self.compute_neg_logits(text_embeds, vision_neg_features, text_masks)
+        # logits: [batch_size, 1+K]
+        logits = torch.cat((pos_logits, neg_logits), dim=-1)
         # labels: positive key indicators, which is 0
         labels = torch.zeros(batch_size, dtype=torch.long, device=text_embeds.device)
-        # compute loss
+        # compute constraive loss
         loss = F.cross_entropy(logits, labels)
         # update queue
         self.text_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = text_embeds
         self.vision_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = vision_embeds
         self.queue_ptr = (self.queue_ptr + batch_size) % self.queue_size
         return loss
+    
+    def compute_pos_logits(self, text_embeds, vision_features, text_masks):
+        # positive logits: Nx1
+        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features)
+        if self.reduction == 'mean':
+            pos_logits = pos_logits.mean(dim=-1)
+        elif self.reduction == 'max':
+            pos_logits = pos_logits.max(dim=-1)
+        elif self.reduction == 'sum':
+            pos_logits = pos_logits.sum(dim=-1)
+        else:
+            raise ValueError(f"Unknown reduction: {self.reduction}")
+        pos_logits = pos_logits.sum(dim=-1) / text_masks.sum(dim=-1) # average over non-padding tokens
+        pos_logits = pos_logits.unsqueeze(-1) # N -> Nx1
+        return pos_logits
+    
+    def compute_neg_logits(self, text_embeds, vision_features, text_masks):
+        # text_embeds and vision_features have different batch size
+        # text_embeds: [N, seq_len1, embed_dim]
+        # vision_features: [K, seq_len2, embed_dim]
+        # out shape: [N, K]
+        neg_logits = torch.einsum('ntd,kvd->nktv', text_embeds, vision_features)
+        if self.reduction == 'mean':
+            neg_logits = neg_logits.mean(dim=-1)
+        elif self.reduction == 'max':
+            neg_logits = neg_logits.max(dim=-1)
+        elif self.reduction == 'sum':
+            neg_logits = neg_logits.sum(dim=-1)
+        else:
+            raise ValueError(f"Unknown reduction: {self.reduction}")
+        neg_logits = neg_logits.sum(dim=-1) / text_masks.sum(dim=-1, keepdim=True) # [N, K] / [N, 1] -> [N, K]
+        return neg_logits

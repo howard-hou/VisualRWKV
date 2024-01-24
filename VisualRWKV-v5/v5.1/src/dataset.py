@@ -15,6 +15,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Model Constants
 IGNORE_INDEX = -100
 IMAGE_TOKEN_INDEX = -200
+PAD_TOKEN_INDEX = 0
 DEFAULT_IMAGE_TOKEN = "<image>"
 STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
@@ -174,7 +175,7 @@ class MyDataset(Dataset):
             self.tokenizer,
             has_image=('image' in sample),
             ctx_len=args.ctx_len,
-            pad_token_id=0)
+            pad_token_id=PAD_TOKEN_INDEX)
         
         # image exist in the data
         if 'image' in sample:
