@@ -57,6 +57,8 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=-1) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--queue_size", type=int, default=16) # for contrastive learning
     parser.add_argument("--vision_ctx_len", type=int, default=577) # number of tokens in vision context
+    parser.add_argument("--constraive_reduction", type=str, default='mean', choices=['mean', 'weighted']) # try 'mean' or 'weighted'
+    parser.add_argument("--constraive_loss_weight", type=float, default=1.0) # try 0.1 / 0.2 / 0.5 / 1.0
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze

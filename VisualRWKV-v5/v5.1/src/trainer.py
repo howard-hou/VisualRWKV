@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+import numpy as np
 
 def my_save(args, trainer, dd, ff):
     if '14b-run1' in ff:
@@ -141,13 +142,7 @@ class train_callback(pl.Callback):
         to_save_dict = {}
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
             if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
-                if args.data_type == 'wds_img':
-                    raw_dict = pl_module.state_dict()
-                    for k in raw_dict:
-                        if k.startswith('encoder.') or k.startswith('decoder.'):
-                            to_save_dict[k] = raw_dict[k]
-                else:
-                    to_save_dict = pl_module.state_dict()
+                to_save_dict = pl_module.state_dict()
                 try:
                     my_save(
                         args, trainer,
@@ -158,7 +153,11 @@ class train_callback(pl.Callback):
                     print('Error\n\n', e, '\n\n')
 
         if trainer.is_global_zero:  # logging
-            trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
+            lm_loss = np.mean(trainer.lm_loss_all)
+            constraive_loss = np.mean(trainer.constraive_loss_all)
+            trainer.my_log.write(
+                f"{args.epoch_begin + trainer.current_epoch} {lm_loss:.3f} {constraive_loss:.3f} {trainer.my_epoch_loss:.3f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n"
+                )
             trainer.my_log.flush()
 
             trainer.my_loss_sum = 0
@@ -169,41 +168,5 @@ class train_callback(pl.Callback):
 def generate_init_weight(model, init_weight_name):
     mm = model.generate_init_weight()
 
-    if model.args.my_pile_stage == 1:
-        if len(model.args.load_model) > 0:
-            print(f"Combine weights from {model.args.load_model}...")
-            load_dict = torch.load(model.args.load_model, map_location="cpu")
-            for k in load_dict:
-                try:
-                    assert k in mm
-                except:
-                    print('missing', k)
-                    exit(0)
-                src = load_dict[k]
-                try:
-                    mm[k] = src.reshape(mm[k].shape)
-                except:
-                    tmp = mm[k].squeeze().clone()
-                    print(k, src.shape, '-->', mm[k].shape)
-                    ss = src.shape[0]
-                    dd = tmp.shape[0]
-                    for i in range(dd):
-                        pos = i / dd * ss
-                        if pos >= ss - 1:
-                            tmp[i] = src[ss-1]
-                        else:
-                            p0 = int(math.floor(pos))
-                            ii = pos - p0
-                            tmp[i] = src[p0] * (1-ii) + src[p0+1] * (ii)
-                    mm[k] = tmp.reshape(mm[k].shape)
-                    sss = src.squeeze().float().cpu().numpy()
-                    print(sss[:10], '...', sss[-10:])
-                    mmm = mm[k].squeeze().float().cpu().numpy()
-                    print(mmm[:10], '...', mmm[-10:])
-
     print(f"Save to {init_weight_name}...")
     torch.save(mm, init_weight_name)
-
-    if model.args.my_pile_stage == 1:
-        print("Done. Now go for stage 2.")
-        exit(0)

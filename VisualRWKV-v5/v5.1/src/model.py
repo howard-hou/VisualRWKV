@@ -345,7 +345,8 @@ class VisualRWKV(pl.LightningModule):
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
         self.align = ContrastiveAlignment(self.proj, args.queue_size, 
                                           args.ctx_len, args.vision_ctx_len, 
-                                          args.n_embd, self.vit.config.hidden_size)
+                                          args.n_embd, self.vit.config.hidden_size,
+                                          reduction=args.constraive_reduction)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -412,6 +413,17 @@ class VisualRWKV(pl.LightningModule):
         shift_labels = targets[..., 1:].contiguous()
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
                                shift_labels.view(-1))
+        constraive_loss = constraive_loss * self.args.constraive_loss_weight
+        # record loss
+        if not hasattr(self.trainer, "lm_loss_all"):
+            self.trainer.lm_loss_all = []
+        if not hasattr(self.trainer, "constraive_loss_all"):
+            self.trainer.constraive_loss_all = []
+        self.trainer.lm_loss_all.append(loss.item())
+        self.trainer.constraive_loss_all.append(constraive_loss.item())
+        self.trainer.lm_loss_all = self.trainer.lm_loss_all[-self.args.epoch_steps:]
+        self.trainer.constraive_loss_all = self.trainer.constraive_loss_all[-self.args.epoch_steps:]
+        # compute total loss
         loss = loss + constraive_loss
         return L2Wrap.apply(loss, logits)
     
@@ -548,6 +560,54 @@ class ContrastiveAlignment(nn.Module):
         self.register_buffer("vision_queue", torch.zeros(queue_size, vision_max_len, vision_embed_dim))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
+    def pool_features(self, text_embeds, vision_features, text_masks=None):
+        if text_masks is None:
+            text_masks = torch.ones_like(text_embeds[..., 0], dtype=torch.bool)
+        if self.reduction == 'mean':
+            vision_pooled_features = vision_features.mean(dim=1)
+            text_pooled_embeds = text_embeds.sum(dim=1) / text_masks.sum(dim=-1, keepdim=True)
+        elif self.reduction == 'weighted':
+            text2vision_similarities = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features)
+            # mask out padding tokens
+            text_embeds_weights = text2vision_similarities.mean(dim=-1) + (~text_masks) * (-1e9)
+            text_embeds_weights = torch.softmax(text2vision_similarities.mean(dim=-1), dim=-1) # [N, T]
+            text_pooled_embeds = torch.einsum('ntd,nt->nd', text_embeds, text_embeds_weights)
+            vision_features_weights = torch.softmax(text2vision_similarities.mean(dim=-2), dim=-1) # [N, V]
+            vision_pooled_features = torch.einsum('nvd,nv->nd', vision_features, vision_features_weights)
+        else:
+            raise ValueError(f"Unknown reduction: {self.reduction}")
+        return text_pooled_embeds, vision_pooled_features
+
+    def compute_in_batch_constraive_loss(self, text_embeds, vision_features, text_masks):
+        # first pool the vision features and text embeds
+        text_pooled_embeds, vision_pooled_features = self.pool_features(text_embeds, vision_features, text_masks)
+        # Calculate pairwise similarity
+        t2v_matrix = text_pooled_embeds @ vision_pooled_features.T # [N, N]
+        v2t_matrix = vision_pooled_features @ text_pooled_embeds.T # [N, N]
+        # Calculate the loss
+        labels = torch.arange(text_embeds.shape[0], device=text_embeds.device)
+        t2v_loss = F.cross_entropy(t2v_matrix, labels, label_smoothing=0.1)
+        v2t_loss = F.cross_entropy(v2t_matrix, labels, label_smoothing=0.1)
+        return (t2v_loss + v2t_loss) / 2
+    
+    def compute_in_queue_constraive_loss(self, text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features):
+        # first pool the vision features and text embeds
+        text_pooled_embeds, vision_pooled_features = self.pool_features(text_embeds, vision_features, text_masks)
+        text_neg_pooled_embeds, vision_neg_pooled_features = self.pool_features(text_neg_embeds, vision_neg_features, text_masks=None)
+        # Calculate pos logits
+        pos_logits = torch.einsum('nd,nd->n', text_pooled_embeds, vision_pooled_features)
+        # Calculate neg logits
+        neg_text_logits = torch.einsum('nd,kd->nk', text_pooled_embeds, vision_neg_pooled_features)
+        neg_vision_logits = torch.einsum('nd,kd->nk', vision_pooled_features, text_neg_pooled_embeds)
+        # Calculate the loss
+        # logits: [batch_size, 1+K+K]
+        logits = torch.cat((pos_logits.unsqueeze(-1), neg_text_logits, neg_vision_logits), dim=-1)
+        # labels: positive key indicators, which is 0
+        labels = torch.zeros(text_embeds.shape[0], dtype=torch.long, device=text_embeds.device)
+        # compute constraive loss
+        loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
+        return loss
+
     def forward(self, text_embeds, vision_embeds, text_masks):
         # text_embeds: [batch_size, text_max_len, embed_dim]
         # vision_embeds: [batch_size, vision_max_len, embed_dim]
@@ -558,51 +618,16 @@ class ContrastiveAlignment(nn.Module):
         vision_neg_features = self.proj(vision_neg_embeds)
         # apply mask, make padding tokens zero
         text_embeds = text_embeds * text_masks.unsqueeze(-1)
-        # compute logits
-        # positive logits: Nx1
-        pos_logits = self.compute_pos_logits(text_embeds, vision_features, text_masks)
-        # negative text logits: NxK
-        neg_logits = self.compute_neg_logits(text_embeds, vision_neg_features, text_masks)
-        # logits: [batch_size, 1+K]
-        logits = torch.cat((pos_logits, neg_logits), dim=-1)
-        # labels: positive key indicators, which is 0
-        labels = torch.zeros(batch_size, dtype=torch.long, device=text_embeds.device)
-        # compute constraive loss
-        loss = F.cross_entropy(logits, labels)
+        text_neg_embeds = self.text_queue.clone().detach()
+        # compute loss, when batch_size == 1, only compute in_queue loss
+        if batch_size != 1:
+            in_batch_loss = self.compute_in_batch_constraive_loss(text_embeds, vision_features, text_masks)
+            in_queue_loss = self.compute_in_queue_constraive_loss(text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features)
+            loss = in_batch_loss + in_queue_loss
+        else:
+            loss = self.compute_in_queue_constraive_loss(text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features)
         # update queue
         self.text_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = text_embeds
         self.vision_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = vision_embeds
         self.queue_ptr = (self.queue_ptr + batch_size) % self.queue_size
         return loss
-    
-    def compute_pos_logits(self, text_embeds, vision_features, text_masks):
-        # positive logits: Nx1
-        pos_logits = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features)
-        if self.reduction == 'mean':
-            pos_logits = pos_logits.mean(dim=-1)
-        elif self.reduction == 'max':
-            pos_logits = pos_logits.max(dim=-1)
-        elif self.reduction == 'sum':
-            pos_logits = pos_logits.sum(dim=-1)
-        else:
-            raise ValueError(f"Unknown reduction: {self.reduction}")
-        pos_logits = pos_logits.sum(dim=-1) / text_masks.sum(dim=-1) # average over non-padding tokens
-        pos_logits = pos_logits.unsqueeze(-1) # N -> Nx1
-        return pos_logits
-    
-    def compute_neg_logits(self, text_embeds, vision_features, text_masks):
-        # text_embeds and vision_features have different batch size
-        # text_embeds: [N, seq_len1, embed_dim]
-        # vision_features: [K, seq_len2, embed_dim]
-        # out shape: [N, K]
-        neg_logits = torch.einsum('ntd,kvd->nktv', text_embeds, vision_features)
-        if self.reduction == 'mean':
-            neg_logits = neg_logits.mean(dim=-1)
-        elif self.reduction == 'max':
-            neg_logits = neg_logits.max(dim=-1)
-        elif self.reduction == 'sum':
-            neg_logits = neg_logits.sum(dim=-1)
-        else:
-            raise ValueError(f"Unknown reduction: {self.reduction}")
-        neg_logits = neg_logits.sum(dim=-1) / text_masks.sum(dim=-1, keepdim=True) # [N, K] / [N, 1] -> [N, K]
-        return neg_logits
