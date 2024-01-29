@@ -131,7 +131,9 @@ def eval_model(args):
     model_name = model_path.parent.name
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path), strict=False)
+    state_dict = torch.load(args.model_path, map_location='cpu')
+    state_dict = {k: v for k, v in state_dict.items() if "queue" not in k}
+    msg = model.load_state_dict(state_dict, strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
@@ -206,6 +208,10 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
+    parser.add_argument("--queue_size", type=int, default=16) # for contrastive learning
+    parser.add_argument("--vision_ctx_len", type=int, default=577) # number of tokens in vision context
+    parser.add_argument("--constraive_reduction", type=str, default='mean', choices=['mean', 'weighted']) # try 'mean' or 'weighted'
+    parser.add_argument("--constraive_loss_weight", type=float, default=1.0) # try 0.1 / 0.2 / 0.5 / 1.0
     parser.add_argument("--detail", type=str, default="high")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation

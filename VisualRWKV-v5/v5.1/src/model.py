@@ -523,9 +523,11 @@ class VisualRWKV(pl.LightningModule):
         # max_new_tokens: int
         '''
         # prepare samples
-        sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
+        samples = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels, truncate=False)
+        image_features  = self.encode_images(samples["images"], do_proj=True)
+        # prepare embedding
+        x, _ = self.preparing_embedding(samples, image_features, truncate=False)
         # generate
         generated = []
         for i in range(max_new_tokens):
