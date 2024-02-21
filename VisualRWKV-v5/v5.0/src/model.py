@@ -11,7 +11,7 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from transformers import CLIPVisionModel
+from transformers import CLIPVisionConfig, CLIPVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
@@ -340,7 +340,11 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
+        if args.vision_tower_name == "dummy":
+            configuration = CLIPVisionConfig()
+            self.vit = CLIPVisionModel(configuration)
+        else:
+            self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 

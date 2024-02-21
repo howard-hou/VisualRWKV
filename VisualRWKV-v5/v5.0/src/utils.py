@@ -35,7 +35,7 @@ def largest_3n_plus_2_prime(x):
     n = x // 3  
     while True:
         num = 3 * n + 2
-        if is_prime(num):
+        if num < x and is_prime(num):
             return num
         n -= 1
 
