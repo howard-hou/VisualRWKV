@@ -186,7 +186,10 @@ if __name__ == "__main__":
     from transformers import CLIPImageProcessor
 
     args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    args.image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    if args.vision_tower_name == 'dummy':
+        args.image_processor = CLIPImageProcessor()
+    else:
+        args.image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
 
     train_data = MyDataset(args)
     args.vocab_size = train_data.vocab_size

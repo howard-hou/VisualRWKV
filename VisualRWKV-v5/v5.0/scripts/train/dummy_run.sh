@@ -1,4 +1,10 @@
-export CUDA_VISIBLE_DEVICES=0 
+export CUDA_VISIBLE_DEVICES=0
+
+# 切换到脚本所在目录的上两级目录
+cd "$(dirname "$(dirname "$0")")/.."
+
+# 打印当前工作目录
+echo "Current working directory: $(pwd)"
 
 python train.py --load_model "" --wandb "" --proj_dir "out/dummy" \
     --data_file "dummy_data/dummy.json" --data_type "json" --vocab_size 65536 \
