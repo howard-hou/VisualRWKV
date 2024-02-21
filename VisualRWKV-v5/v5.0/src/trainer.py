@@ -5,22 +5,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 
 def my_save(args, trainer, dd, ff):
-    if '14b-run1' in ff:
-        fn = ff.split('/')[-1]
-        fff = '/dev/shm/' + fn
-        torch.save(dd, fff)
-        subprocess.Popen(f" aws s3 mv {fff} s3://rwkv-14b-4k/{fn} --quiet", shell=True)
-    elif ('world/14b' in ff) or ('world/7b' in ff):
-        aa = ff.split('/')[1]
-        fn = ff.split('/')[-1]
-        fff = f'/dev/shm/{aa}-{fn}'
-        torch.save(dd, fff)
-        subprocess.Popen(f" aws s3 mv {fff} s3://rwkv-world/{aa}-{fn} --quiet", shell=True)
+    if 'deepspeed_stage_3' in args.strategy:
+        trainer.save_checkpoint(ff, weights_only=True)
     else:
-        if 'deepspeed_stage_3' in args.strategy:
-            trainer.save_checkpoint(ff, weights_only=True)
-        else:
-            torch.save(dd, ff)
+        torch.save(dd, ff)
 
 class train_callback(pl.Callback):
     def __init__(self, args):
@@ -141,13 +129,7 @@ class train_callback(pl.Callback):
         to_save_dict = {}
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
             if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
-                if args.data_type == 'wds_img':
-                    raw_dict = pl_module.state_dict()
-                    for k in raw_dict:
-                        if k.startswith('encoder.') or k.startswith('decoder.'):
-                            to_save_dict[k] = raw_dict[k]
-                else:
-                    to_save_dict = pl_module.state_dict()
+                to_save_dict = pl_module.state_dict()
                 try:
                     my_save(
                         args, trainer,
