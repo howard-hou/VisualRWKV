@@ -33,7 +33,7 @@ class train_callback(pl.Callback):
         # if args.cuda_cleanup > 0:
         #     torch.cuda.empty_cache()
         # global_step is update step, influence by gradient accumulation
-        real_step = trainer.global_step * args.my_accumulate_grad_batches + args.epoch_begin * args.epoch_steps
+        real_step = trainer.global_step * args.accumulate_grad_batches + args.epoch_begin * args.epoch_steps
 
         # LR schedule, cosine with warmup
         w_step = args.warmup_steps
