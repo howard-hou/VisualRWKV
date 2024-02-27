@@ -184,7 +184,9 @@ if __name__ == "__main__":
     args.vocab_size = train_data.vocab_size
 
     from src.model import VisualRWKV
-    model = VisualRWKV(args)
+    # 256gb cpu memory is not enough for 8 gpus
+    # to use 6 gpus on 256gb cpu memory, use .half() to save memory
+    model = VisualRWKV(args).half()
     if args.model_path:
         msg = model.load_state_dict(torch.load(args.model_path, map_location='cpu'), strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
@@ -207,6 +209,7 @@ if __name__ == "__main__":
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
+        rank_zero_info('deepspeed config:', trainer.strategy.config)
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, 
