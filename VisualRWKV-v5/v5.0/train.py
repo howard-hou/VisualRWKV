@@ -136,9 +136,6 @@ if __name__ == "__main__":
 
     assert args.data_type in ["json"]
 
-    if args.lr_final == 0 or args.lr_init == 0:
-        rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
-
     assert args.precision in ["fp32", "tf32", "fp16", "bf16"]
     os.environ["RWKV_FLOAT_MODE"] = args.precision
     if args.precision == "fp32":

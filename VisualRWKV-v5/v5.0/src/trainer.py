@@ -32,11 +32,9 @@ class train_callback(pl.Callback):
             progress = (real_step - w_step + 1) / (decay_total - w_step)
             progress = min(1, max(0, progress))
 
-            if args.lr_final == 0 or args.lr_init == 0:  # linear decay
-                lr = args.lr_init + (args.lr_final - args.lr_init) * progress
-            else:  # cosine decay
-                cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
-                lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
+            # cosine decay
+            cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
+            lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
 
         if real_step < w_step:
             lr = lr * (0.1 + 0.9 * real_step / w_step)
