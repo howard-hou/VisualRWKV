@@ -144,7 +144,9 @@ def eval_model(args):
     image_folder = Path(args.image_folder) if args.image_folder is not None else None
 
     out_file = open(output_file, "w")
-    for line in tqdm(questions):
+    pbar = tqdm(total=len(questions))
+    update_every = len(questions) // 100
+    for i, line in enumerate(questions):
         idx = get_question_id(line)
         input_text = get_input_text(line, dataset_name=args.dataset_name)
 
@@ -187,8 +189,12 @@ def eval_model(args):
                                    "metadata": {
                                        "image_file": line.get("image", None),
                                    }}, ensure_ascii=False) + "\n")
+        # update progress bar
+        if i % update_every == 0:
+            pbar.update(update_every)
         out_file.flush()
     out_file.close()
+    pbar.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

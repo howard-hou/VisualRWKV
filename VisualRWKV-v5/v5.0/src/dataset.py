@@ -187,6 +187,7 @@ class MyDataset(Dataset):
             else:
                 crop_size = args.image_processor.crop_size
                 data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+        print(f"rank{rank}: sample_idx: {sample_idx} idx: {idx} successfull loaded data.")
         return data_dict
     
 
