@@ -121,7 +121,7 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             crop_size = image_processor.crop_size
             image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
         else:
-            crop_size = args.image_processor.crop_size
+            crop_size = image_processor.crop_size
             image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
     return image_tensor
 
@@ -212,7 +212,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--detail", type=str, default="high")
+    parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)

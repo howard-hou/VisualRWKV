@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
     ########################################################################################################
 
-    from src.trainer import train_callback, generate_init_weight
+    from src.trainer import train_callback
     from src.dataset import MyDataset
     from src.rwkv_tokenizer import TRIE_TOKENIZER
     from transformers import CLIPImageProcessor

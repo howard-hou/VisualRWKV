@@ -162,11 +162,3 @@ class train_callback(pl.Callback):
 
             trainer.my_loss_sum = 0
             trainer.my_loss_count = 0
-
-
-@rank_zero_only
-def generate_init_weight(model, init_weight_name):
-    mm = model.generate_init_weight()
-
-    print(f"Save to {init_weight_name}...")
-    torch.save(mm, init_weight_name)
