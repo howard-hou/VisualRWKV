@@ -477,8 +477,10 @@ class VisualRWKV(pl.LightningModule):
         # Truncate sequences to max length as image embeddings can make the sequence longer
         # keep the last `ctx_len` tokens oftherwise may case nan loss
         if truncate:
-            new_input_embeds = [x[-self.args.ctx_len:] for x in new_input_embeds]
-            new_labels = [x[-self.args.ctx_len:] for x in new_labels]
+            # new_input_embeds = [x[-self.args.ctx_len:] for x in new_input_embeds]
+            # new_labels = [x[-self.args.ctx_len:] for x in new_labels]
+            new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
+            new_labels = [x[:self.args.ctx_len] for x in new_labels]
         # Combine them
         max_len = max(x.shape[0] for x in new_input_embeds)
         batch_size = len(new_input_embeds)

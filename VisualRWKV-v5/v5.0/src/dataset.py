@@ -32,7 +32,8 @@ def process_image_tokens_in_conversations(
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+            # sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+            sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
