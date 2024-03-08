@@ -22,6 +22,8 @@ def prompt_processor(prompt):
     elif 'Reference OCR token: ' in prompt:
         if prompt.startswith('User: <image>\n'):
             question = prompt.split('\n')[1]
+        elif '\n<image>\n' in prompt:
+            question = prompt.split('\n<image>\n')[-1].split('\n')[0]
         else:
             question = prompt.split('\n')[0]
     elif len(prompt.split('\n')) == 2:

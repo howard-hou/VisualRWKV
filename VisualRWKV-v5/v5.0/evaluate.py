@@ -154,7 +154,7 @@ def eval_model(args):
         conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
-        conversations = process_image_tokens_in_conversations(conv.conversations)
+        conversations = process_image_tokens_in_conversations(conv.conversations, args.image_place)
 
         image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
         image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
@@ -226,6 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dataset_name", type=str, default="default")
+    parser.add_argument("--image_place", default='first', type=str)  # 'first' or 'last' or ''middle
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
