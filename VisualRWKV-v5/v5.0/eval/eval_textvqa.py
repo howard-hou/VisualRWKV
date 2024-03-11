@@ -19,11 +19,15 @@ def prompt_processor(prompt):
         pattern = r"Question: (.*?) Short answer:"
         match = re.search(pattern, prompt, re.DOTALL)
         question = match.group(1)
-    elif 'Reference OCR token: ' in prompt:
-        if prompt.startswith('User: <image>\n'):
+    elif 'Reference OCR token: ' in prompt: 
+        if prompt.startswith('User: <image>\n'):# image_place: first
             question = prompt.split('\n')[1]
-        elif '\n<image>\n' in prompt:
-            question = prompt.split('\n<image>\n')[-1].split('\n')[0]
+        elif '\n<image>\n' in prompt: 
+            if prompt.endswith('\n<image>\n\nAssistant:'):
+                question = prompt.split('\n')[0] # image_place: last
+                question = question.split('User: ')[-1]
+            else: # image_place: middle
+                question = prompt.split('\n<image>\n')[-1].split('\n')[0]
         else:
             question = prompt.split('\n')[0]
     elif len(prompt.split('\n')) == 2:

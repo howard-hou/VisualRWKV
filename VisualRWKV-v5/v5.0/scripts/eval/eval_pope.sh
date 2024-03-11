@@ -9,6 +9,12 @@ image_place=$8
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
 
+# 切换到脚本所在目录的上两级目录
+cd "$(dirname "$(dirname "$0")")/.."
+
+# 打印当前工作目录
+echo "Current working directory: $(pwd)"
+
 # 使用basename命令获取父目录名称
 exp_name=$(basename "${parent_dir}")
 echo "exp name: $exp_name, model path: $model_path"
