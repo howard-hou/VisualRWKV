@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
-    parser.add_argument("--image_place", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()

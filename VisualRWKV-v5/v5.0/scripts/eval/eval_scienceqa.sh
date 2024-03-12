@@ -5,7 +5,7 @@ n_embd=$4
 n_layer=$5
 eval_dir=$6
 vision_tower_path=$7
-image_place=$8
+image_position=$8
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
 
@@ -20,7 +20,7 @@ exp_name=$(basename "${parent_dir}")
 echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"
-echo "vision tower path: $vision_tower_path", "image place: $image_place"
+echo "vision tower path: $vision_tower_path", "image position: $image_position"
 
 python evaluate.py \
     --ctx_len $ctx_len --grid_size $grid_size --n_embd $n_embd --n_layer $n_layer \
@@ -29,7 +29,10 @@ python evaluate.py \
     --image_folder $eval_dir/eval/scienceqa/images/test \
     --question_file $eval_dir/eval/scienceqa/llava_test_CQM-A.json \
     --output_file $eval_dir/eval/scienceqa/answers/$exp_name.jsonl \
-    --image_place $image_place
+    --image_position $image_position
+
+# sleep 5 seconds to avoid the conflict of writing files
+sleep 5
 
 python eval/eval_science_qa.py \
     --base-dir $eval_dir/eval/scienceqa \

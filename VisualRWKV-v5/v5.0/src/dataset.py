@@ -23,7 +23,7 @@ DEFAULT_STOP_TOKEN = "\n\n"
 
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
-    image_place: str = "first", # "first", "middle" or "last"
+    image_position: str = "first", # "first", "middle" or "last"
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
@@ -34,14 +34,14 @@ def process_image_tokens_in_conversations(
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            if image_place == "first":
+            if image_position == "first":
                 sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-            elif image_place == "middle":
+            elif image_position == "middle":
                 sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-            elif image_place == "last":
+            elif image_position == "last":
                 sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
             else:
-                raise ValueError(f"Unknown image_place: {image_place}, must be first, middle or last.")
+                raise ValueError(f"Unknown image_position: {image_position}, must be first, middle or last.")
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
@@ -175,7 +175,7 @@ class MyDataset(Dataset):
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values']
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
-                                                                  image_place=args.image_place)
+                                                                  image_position=args.image_position)
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
