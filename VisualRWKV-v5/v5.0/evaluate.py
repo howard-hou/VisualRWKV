@@ -182,13 +182,14 @@ def eval_model(args):
 
         output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
 
-        out_file.write(json.dumps({"question_id": idx,
-                                   "prompt": cur_prompt,
-                                   "text": output,
-                                   "model_id": model_name,
-                                   "metadata": {
-                                       "image_file": line.get("image", None),
-                                   }}, ensure_ascii=False) + "\n")
+        out_str = json.dumps({"question_id": idx,
+                              "prompt": cur_prompt,
+                              "text": output,
+                              "model_id": model_name,
+                              "metadata": {
+                                  "image_file": line.get("image", None),
+                              }}, ensure_ascii=False)
+        out_file.write(out_str + "\n")
         # update progress bar
         if i % update_every == 0:
             pbar.update(update_every)

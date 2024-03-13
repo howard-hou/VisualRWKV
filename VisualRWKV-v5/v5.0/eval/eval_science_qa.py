@@ -54,7 +54,6 @@ if __name__ == "__main__":
     problems = json.load(open(os.path.join(base_dir, "problems.json")))
     predictions = load_predictions(args.result_file)
     print("num of loaded predictions:", len(predictions))
-    predictions = [json.loads(line) for line in open(args.result_file)]
     predictions = {pred['question_id']: pred for pred in predictions}
     split_problems = {idx: problems[idx] for idx in split_indices}
 
