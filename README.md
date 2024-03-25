@@ -1,6 +1,6 @@
 # VisualRWKV: A Visual-Enhanced RWKV
 <p align="center">
-  <img src="./rwkv_emoji.png" alt="Logo" width="350">
+  <img src="./rwkv_emoji.png" alt="Logo" width="200">
 </p>
 
 📖 [Technical report]() | 🤗 [Model](https://huggingface.co/howard-hou/visualrwkv-5) | 🐰 [Demo](https://huggingface.co/spaces/howard-hou/VisualRWKV-Gradio-1)
@@ -15,4 +15,4 @@ VisualRWKV is the visual-enhanced version of the RWKV language model, enabling R
 </p>
 
 ## News and Updates
-* 2024.03.25 🔥 **VisualRWKV is released!**. 
+* 2024.03.25 🔥 **VisualRWKV-5.0 is released!**. 
