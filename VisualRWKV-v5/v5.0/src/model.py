@@ -475,10 +475,8 @@ class VisualRWKV(pl.LightningModule):
             else:
                 raise ValueError(f"Too many images in one sample: {num_images}, should be 0 or 1.")
         # Truncate sequences to max length as image embeddings can make the sequence longer
-        # keep the last `ctx_len` tokens oftherwise may case nan loss
+        # keep the first `ctx_len` tokens, to make sure instruction complete
         if truncate:
-            # new_input_embeds = [x[-self.args.ctx_len:] for x in new_input_embeds]
-            # new_labels = [x[-self.args.ctx_len:] for x in new_labels]
             new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
             new_labels = [x[:self.args.ctx_len] for x in new_labels]
         # Combine them
