@@ -371,7 +371,7 @@ class VisualRWKV(pl.LightningModule):
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
     def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", strict=False))
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu"), strict=False)
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
