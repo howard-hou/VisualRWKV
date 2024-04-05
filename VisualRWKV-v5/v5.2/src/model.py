@@ -224,8 +224,10 @@ class TinyAttention(MyModule):
         T = x.size(1)
         xx = self.tiny_ln(x)
         q = self.tiny_q(xx)[:, :T, :]
-        k = self.tiny_k(x_emb)[:, :T, :]
-        v = self.tiny_v(x_emb)[:, :T, :]
+        k = self.tiny_k(xx)[:, :T, :]
+        v = self.tiny_v(xx)[:, :T, :]
+        # k = self.tiny_k(x_emb)[:, :T, :]
+        # v = self.tiny_v(x_emb)[:, :T, :]
         c = (q @ k.transpose(-2, -1)) * (self.args.tiny_att_dim ** (-0.5))
         c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
         return c @ v
