@@ -7,7 +7,7 @@ cd "$(dirname "$(dirname "$0")")/.."
 echo "Current working directory: $(pwd)"
 
 python train.py --model_path out/rwkv7b-vitl336p14_pretrain/rwkv-17.pth \
-    --wandb "" --proj_dir out/rwkv7b-vitl336p14-577token_mix665k_sandwich \
+    --wandb "" --proj_dir out/rwkv7b-vitl336p14-577token_mix665k_att4096-31 \
     --data_file /houhaowenT/huggingface_datasets/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k.json \
     --data_type "json" --vocab_size 65536 \
     --ctx_len 2048 --epoch_steps 1000 --epoch_count 111 --epoch_begin 0 --epoch_save 20 \
