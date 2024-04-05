@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
+    parser.add_argument("--freeze_tiny_att", default=0, type=int)  # freeze tiny att
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
 
     parser = Trainer.add_argparse_args(parser)
@@ -191,7 +192,7 @@ if __name__ == "__main__":
         msg = model.load_state_dict(torch.load(args.model_path, map_location='cpu'), strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
-        model.freeze_rwkv(args.freeze_rwkv)
+        model.freeze_rwkv(args.freeze_rwkv, args.freeze_tiny_att > 0)
     if args.freeze_proj > 0:
         model.freeze_proj()
 

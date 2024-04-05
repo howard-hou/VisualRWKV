@@ -210,6 +210,25 @@ class RWKV_ChannelMix(MyModule):
 # The RWKV Model with our blocks
 ########################################################################################################
 
+class TinyAttention(MyModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.tiny_ln = nn.LayerNorm(args.n_embd)
+        self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
+        self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
+        self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
+        self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+
+    def forward(self, x, x_emb):
+        T = x.size(1)
+        xx = self.tiny_ln(x)
+        q = self.tiny_q(xx)[:, :T, :]
+        k = self.tiny_k(xx)[:, :T, :]
+        c = (q @ k.transpose(-2, -1)) * (self.args.tiny_att_dim ** (-0.5))
+        c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
+        return c @ self.tiny_v(x_emb)
+
 
 class Block(nn.Module):
     def __init__(self, args, layer_id):
@@ -231,11 +250,7 @@ class Block(nn.Module):
         self.ffn = RWKV_ChannelMix(args, layer_id)
 
         if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-            self.tiny_ln = nn.LayerNorm(args.n_embd)
-            self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-            self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-            self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
-            self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+            self.tiny_att = TinyAttention(args)
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
@@ -243,7 +258,7 @@ class Block(nn.Module):
         
     def forward(self, x, x_emb=None):
         args = self.args
-        B, T, C = x.size()
+        
         if self.layer_id == 0:
             x = self.ln0(x)
 
@@ -261,12 +276,7 @@ class Block(nn.Module):
             x = self.drop1(x + self.ffn(self.ln2(x)))
 
         if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-            xx = self.tiny_ln(x)
-            q = self.tiny_q(xx)[:, :T, :]
-            k = self.tiny_k(xx)[:, :T, :]
-            c = (q @ k.transpose(-2, -1)) * (args.tiny_att_dim ** (-0.5))
-            c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
-            x = x + c @ self.tiny_v(x_emb)
+            x = x + self.tiny_att(x, x_emb)
         return x
 
 
@@ -382,15 +392,18 @@ class VisualRWKV(pl.LightningModule):
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
     
-    def freeze_rwkv(self, num_layers_to_freeze=0):
+    def freeze_rwkv(self, num_layers_to_freeze=0, freeze_tiny_att=False):
         # freeze all layers including embedding and lm head
         if num_layers_to_freeze == self.args.n_layer:
             self.rwkv.requires_grad_(False)
         # otherwise, freeze only the first num_layers_to_freeze layers
         for i, block in enumerate(self.rwkv.blocks):
             if i < num_layers_to_freeze:
-                for p in block.parameters():
-                    p.requires_grad_(False)
+                for n, p in block.named_parameters():
+                    if 'tiny_att' in n and not freeze_tiny_att:
+                        p.requires_grad_(True)
+                    else:
+                        p.requires_grad_(False)
             else:
                 for p in block.parameters():
                     p.requires_grad_(True)
@@ -402,6 +415,7 @@ class VisualRWKV(pl.LightningModule):
 
     def freeze_proj(self):
         self.proj.requires_grad_(False)
+
 
     def configure_optimizers(self):
         trainable_params = [p for p in self.parameters() if p.requires_grad]
