@@ -16,5 +16,5 @@ python train.py --load_model /houhaowenT/huggingface_models/BlinkDL/rwkv-5-world
     --accelerator gpu --devices 4 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
     --image_folder /houhaowenT/huggingface_datasets/LLaVA-Pretrain/images/ \
     --vision_tower_name /houhaowenT/huggingface_models/openai/clip-vit-large-patch14-336 \
-    --freeze_rwkv 31 --freeze_proj 0 --detail low --grid_size -1 --image_position middle \
-    --enable_progress_bar False --tiny_att_dim 4096 --tiny_att_layer 31
+    --freeze_rwkv 32 --freeze_proj 0 --detail low --grid_size -1 --image_position middle \
+    --enable_progress_bar False --tiny_att_dim 4096 --tiny_att_layer 31 --freeze_tiny_att 0 
