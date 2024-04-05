@@ -216,17 +216,18 @@ class TinyAttention(MyModule):
         self.tiny_ln = nn.LayerNorm(args.n_embd)
         self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
         self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        self.tiny_v = nn.Linear(args.vit_dim, args.n_embd, bias=False)
+        self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
         self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
 
     def forward(self, x, x_emb):
-        T = x.size(1)
+        T, L = x.size(1), x_emb.size(1)
         xx = self.tiny_ln(x)
         q = self.tiny_q(xx)[:, :T, :]
-        k = self.tiny_k(xx)[:, :T, :]
+        k = self.tiny_k(x_emb)[:, :L, :]
+        v = self.tiny_v(x_emb)[:, :L, :]
         c = (q @ k.transpose(-2, -1)) * (self.args.tiny_att_dim ** (-0.5))
-        c = c.masked_fill(self.tiny_mask[:T, :T] == 0, 0)
-        return c @ self.tiny_v(x_emb)
+        c = c.masked_fill(self.tiny_mask[:T, :L] == 0, 0)
+        return c @ v
 
 class Block(nn.Module):
     def __init__(self, args, layer_id):
