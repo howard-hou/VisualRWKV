@@ -40,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
-    parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ which layer
+    parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers
 
     parser.add_argument("--lr_init", default=6e-4, type=float)  # 6e-4 for L12-D768, 4e-4 for L24-D1024, 3e-4 for L24-D2048
     parser.add_argument("--lr_final", default=1e-5, type=float)
@@ -184,6 +184,9 @@ if __name__ == "__main__":
     args.vocab_size = train_data.vocab_size
 
     from src.model import VisualRWKV
+    # adjust arguments for tiny attention, from int to list
+    args.tiny_att_layer = [i for i in range(args.n_layer)][-args.tiny_att_layer:] if args.tiny_att_layer > 0 else []
+    rank_zero_info(f"tiny attention layers: {args.tiny_att_layer}")
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()

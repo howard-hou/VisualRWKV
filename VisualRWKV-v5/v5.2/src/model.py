@@ -218,8 +218,8 @@ class TinyAttention(MyModule):
         self.n_head = args.tiny_att_dim // args.head_size_a
         self.tiny_ln = nn.LayerNorm(args.n_embd)
         self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        self.tiny_k = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
-        self.tiny_v = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
+        self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
+        self.tiny_v = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
         self.tiny_o = nn.Linear(args.tiny_att_dim, args.n_embd, bias=False)
 
     def forward(self, x, x_emb):

@@ -253,7 +253,7 @@ class Block(nn.Module):
 
         self.ffn = RWKV_ChannelMix(args, layer_id)
 
-        if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
+        if args.tiny_att_dim > 0 and self.layer_id in args.tiny_att_layer:
             self.tiny_att = TinyAttention(args)
 
         if args.dropout > 0:
@@ -271,16 +271,22 @@ class Block(nn.Module):
                 x = x + self.ffnPre(self.ln1(x))
             else:
                 x = x + self.att(self.ln1(x))
+            # tiny attention
+            if args.tiny_att_dim > 0 and self.layer_id in args.tiny_att_layer:
+                x = x + self.tiny_att(x, x_emb)
+            # ffn
             x = x + self.ffn(self.ln2(x))
         else:
             if self.layer_id == 0 and args.pre_ffn > 0:
                 x = self.drop0(x + self.ffnPre(self.ln1(x)))
             else:
                 x = self.drop0(x + self.att(self.ln1(x)))
+            # tiny attention
+            if args.tiny_att_dim > 0 and self.layer_id in args.tiny_att_layer:
+                x = x + self.tiny_att(x, x_emb)
+            # ffn
             x = self.drop1(x + self.ffn(self.ln2(x)))
 
-        if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
-            x = x + self.tiny_att(x, x_emb)
         return x
 
 
