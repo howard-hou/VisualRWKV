@@ -213,21 +213,26 @@ class TinyAttention(MyModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        self.tiny_att_dim = args.tiny_att_dim
+        self.head_size = args.head_size_a
+        self.n_head = args.tiny_att_dim // args.head_size_a
         self.tiny_ln = nn.LayerNorm(args.n_embd)
         self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        self.tiny_k = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        self.tiny_v = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        self.register_buffer("tiny_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
+        self.tiny_k = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
+        self.tiny_v = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
+        self.tiny_o = nn.Linear(args.tiny_att_dim, args.n_embd, bias=False)
 
     def forward(self, x, x_emb):
-        T, L = x.size(1), x_emb.size(1)
+        L = x_emb.size(1)
+        B, T, _ = x.size()
         xx = self.tiny_ln(x)
-        q = self.tiny_q(xx)[:, :T, :]
-        k = self.tiny_k(x_emb)[:, :L, :]
-        v = self.tiny_v(x_emb)[:, :L, :]
-        c = (q @ k.transpose(-2, -1)) * (self.args.tiny_att_dim ** (-0.5))
-        c = c.masked_fill(self.tiny_mask[:T, :L] == 0, 0)
-        return c @ v
+        q = self.tiny_q(xx).view(B, T, self.n_head, self.head_size).transpose(1, 2) # (B, nh, T, hs)
+        k = self.tiny_k(x_emb).view(B, L, self.n_head, self.head_size).transpose(1, 2) # (B, nh, L, hs)
+        v = self.tiny_v(x_emb).view(B, L, self.n_head, self.head_size).transpose(1, 2) # (B, nh, L, hs)
+        # efficient attention using Flash Attention CUDA kernels
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.tiny_att_dim) # re-assemble all head outputs side by side
+        return self.tiny_o(y)
 
 class Block(nn.Module):
     def __init__(self, args, layer_id):
