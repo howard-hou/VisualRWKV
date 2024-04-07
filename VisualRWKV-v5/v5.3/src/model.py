@@ -221,6 +221,8 @@ class TinyAttention(MyModule):
         self.tiny_k = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
         self.tiny_v = nn.Linear(args.vit_dim, args.tiny_att_dim, bias=False)
         self.tiny_o = nn.Linear(args.tiny_att_dim, args.n_embd, bias=False)
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
 
     def forward(self, x, x_emb):
         L = x_emb.size(1)
@@ -229,8 +231,15 @@ class TinyAttention(MyModule):
         q = self.tiny_q(xx).view(B, T, self.n_head, self.head_size).transpose(1, 2) # (B, nh, T, hs)
         k = self.tiny_k(x_emb).view(B, L, self.n_head, self.head_size).transpose(1, 2) # (B, nh, L, hs)
         v = self.tiny_v(x_emb).view(B, L, self.n_head, self.head_size).transpose(1, 2) # (B, nh, L, hs)
-        # efficient attention using Flash Attention CUDA kernels
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None)
+        # cross-attention: (B, nh, T, hs) x (B, nh, hs, L) -> (B, nh, T, L)
+        if self.flash:
+            # efficient attention using Flash Attention CUDA kernels
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=None)
+        else:
+            # manual implementation of attention
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = F.softmax(att, dim=-1)
+            y = att @ v # (B, nh, T, L) x (B, nh, L, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, self.tiny_att_dim) # re-assemble all head outputs side by side
         return self.tiny_o(y)
 
