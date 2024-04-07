@@ -5,9 +5,11 @@ cd "$(dirname "$(dirname "$0")")/.."
 
 # 打印当前工作目录
 echo "Current working directory: $(pwd)"
+tiny_att_layer=$1
+echo "tiny_att_layer: $tiny_att_layer"
 
 python train.py --load_model /root/autodl-tmp/huggingface_models/BlinkDL/rwkv-5-world/RWKV-5-World-1B5-v2-20231025-ctx4096.pth \
-    --wandb "" --proj_dir out/rwkv1b5-pretrain \
+    --wandb "" --proj_dir out/rwkv1b5-tiny${tiny_att_layer}_pretrain \
     --data_file /root/autodl-tmp/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json \
     --data_type "json" --vocab_size 65536 \
     --ctx_len 1024 --epoch_steps 1000 --epoch_count 70 --epoch_begin 0 --epoch_save 0 \
@@ -17,4 +19,4 @@ python train.py --load_model /root/autodl-tmp/huggingface_models/BlinkDL/rwkv-5-
     --image_folder /root/autodl-tmp/LLaVA-Pretrain/images/ \
     --vision_tower_name /root/autodl-tmp/huggingface_models/openai/clip-vit-large-patch14-336 \
     --freeze_rwkv 24 --detail low --grid_size -1 --image_position first \
-    --enable_progress_bar True --tiny_att_dim 2048 --tiny_att_layer 1 --freeze_tiny_att 0
+    --enable_progress_bar True --tiny_att_dim 2048 --tiny_att_layer ${tiny_att_layer} --freeze_tiny_att 0
