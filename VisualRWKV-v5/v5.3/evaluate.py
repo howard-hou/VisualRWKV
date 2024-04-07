@@ -130,6 +130,9 @@ def eval_model(args):
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
     # Model
+    # adjust arguments for tiny attention, from int to list
+    args.tiny_att_layer = [i for i in range(args.n_layer)][-args.tiny_att_layer:] if args.tiny_att_layer > 0 else []
+    print("tiny_att_layer: ", args.tiny_att_layer)
     model = VisualRWKV(args)
     msg = model.load_state_dict(torch.load(model_path), strict=False)
     print("msg of loading model: ", msg)
@@ -215,6 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
+    parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
+    parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)
