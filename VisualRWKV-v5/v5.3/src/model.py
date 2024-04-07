@@ -500,11 +500,11 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels, truncate=False)
+        x, _, image_features = self.preparing_embedding(sampels, truncate=False)
         # generate
         generated = []
         for i in range(max_new_tokens):
-            logits = self.rwkv(x)[:, -1, :]
+            logits = self.rwkv(x, x_emb=image_features)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
