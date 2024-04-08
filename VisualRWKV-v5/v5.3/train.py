@@ -73,6 +73,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     if "deepspeed" in args.strategy:
         import deepspeed
+        deepspeed.ops.op_builder.CPUAdamBuilder().load()
     from pytorch_lightning import seed_everything
 
     if args.random_seed >= 0:
