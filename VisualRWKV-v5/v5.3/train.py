@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
+    parser.add_argument("--vit_unfreeze_layers", default=0, type=int) 
     parser.add_argument("--freeze_tiny_att", default=0, type=int)  # freeze tiny attention
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
 

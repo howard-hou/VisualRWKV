@@ -393,7 +393,7 @@ class VisualRWKV(pl.LightningModule):
             self.vit = CLIPVisionModel(configuration)
         else:
             self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
-        self.vit.requires_grad_(False)
+        self.freeze_vit(args.vit_unfreeze_layers)
         args.vit_dim = self.vit.config.hidden_size
         # load rwkv
         self.rwkv = RWKV(args)
@@ -411,7 +411,14 @@ class VisualRWKV(pl.LightningModule):
             cfg = strategy.config["zero_optimization"]
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
-    
+
+    def freeze_vit(self, unfreeze_layers=0):
+        self.vit.requires_grad_(False)
+        if unfreeze_layers > 0:
+            for p in self.vit.vision_model.encoder.layers[-unfreeze_layers:].parameters():
+                p.requires_grad = True
+            self.vit.vision_model.post_layernorm.requires_grad_(True)
+
     def freeze_rwkv(self, num_layers_to_freeze=0, freeze_tiny_att=False):
         # freeze all layers including embedding and lm head
         if num_layers_to_freeze == self.args.n_layer:
