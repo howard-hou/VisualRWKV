@@ -21,5 +21,5 @@ python train.py --model_path out/rwkv1b5-tiny${tiny_att_layer}_pretrain/rwkv-69.
     --accelerator gpu --devices 1 --precision bf16 --strategy deepspeed_stage_2_offload --grad_cp 0 \
     --image_folder /root/autodl-tmp/LLaVA-Instruct-150K/images/ \
     --vision_tower_name /root/autodl-tmp/huggingface_models/openai/clip-vit-large-patch14-336 \
-    --freeze_rwkv $freeze_rwkv --detail low --grid_size -1 --image_position first \
+    --freeze_rwkv $freeze_rwkv --vit_unfreeze_layers 1 --detail low --grid_size -1 --image_position first \
     --enable_progress_bar True --tiny_att_dim 2048 --tiny_att_layer ${tiny_att_layer} --freeze_tiny_att 0

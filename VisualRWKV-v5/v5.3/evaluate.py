@@ -220,6 +220,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
     parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers
+    parser.add_argument("--vit_unfreeze_layers", default=0, type=int) 
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)
