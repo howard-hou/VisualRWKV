@@ -41,6 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
     parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers
+    parser.add_argument("--unified_vision_dim", default=1024, type=int)  # tiny attention @ last num layers
 
     parser.add_argument("--lr_init", default=6e-4, type=float)  # 6e-4 for L12-D768, 4e-4 for L24-D1024, 3e-4 for L24-D2048
     parser.add_argument("--lr_final", default=1e-5, type=float)
@@ -58,11 +59,10 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_sam", default="", type=str)  # empty means not use 
     parser.add_argument("--vision_tower_dino", default="", type=str)  # empty means not use
     parser.add_argument("--image_folder", type=str, default="images")
-    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--clip_unfreeze_layers", default=0, type=int) 
     parser.add_argument("--sam_unfreeze_layers", default=0, type=int) 
     parser.add_argument("--dino_unfreeze_layers", default=0, type=int) 
+    parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_tiny_att", default=0, type=int)  # freeze tiny attention
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
 
@@ -182,10 +182,13 @@ if __name__ == "__main__":
     args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     if args.vision_tower_clip:
         args.clip_image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_clip)
+        rank_zero_info(f"using clip image encoder: {args.vision_tower_clip}")
     if args.vision_tower_sam:
-        args.sam_image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_sam)
+        args.sam_image_processor = AutoImageProcessor.from_pretrained('facebook/sam-vit-base')
+        rank_zero_info(f"using sam image encoder: facebook/sam-vit-base")
     if args.vision_tower_dino:
         args.dino_image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_dino)
+        rank_zero_info(f"using dino image encoder: {args.vision_tower_dino}")
 
     train_data = MyDataset(args)
     args.vocab_size = train_data.vocab_size

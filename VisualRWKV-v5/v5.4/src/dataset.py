@@ -170,15 +170,15 @@ class MyDataset(Dataset):
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
                                                                   image_position=args.image_position)
             if hasattr(args, "clip_image_processor"):
-                clip_image = args.clip_image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+                clip_image = args.clip_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             else:
                 clip_image = None
             if hasattr(args, "sam_image_processor"):
-                sam_image = args.sam_image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+                sam_image = args.sam_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             else:
                 sam_image = None
             if hasattr(args, "dino_image_processor"):
-                dino_image = args.dino_image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+                dino_image = args.dino_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             else:
                 dino_image = None
         else:
@@ -203,13 +203,13 @@ class MyDataset(Dataset):
             # image does not exist in the data, fill with zeros
             if hasattr(args, "clip_image_processor"):
                 crop_size = args.clip_image_processor.crop_size
-                data_dict['clip_images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+                data_dict['clip_images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
             if hasattr(args, "sam_image_processor"):
                 crop_size = args.sam_image_processor.crop_size
-                data_dict['sam_images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+                data_dict['sam_images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
             if hasattr(args, "dino_image_processor"):
                 crop_size = args.dino_image_processor.crop_size
-                data_dict['dino_images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+                data_dict['dino_images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
 
         return data_dict
     

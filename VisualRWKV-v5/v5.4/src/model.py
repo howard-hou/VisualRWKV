@@ -394,10 +394,12 @@ class VisualRWKV(pl.LightningModule):
         self.freeze_clip(args.clip_unfreeze_layers)
         # load sam
         self.sam = build_sam_vit_b(checkpoint=args.vision_tower_sam)
-        self.sam_projector = nn.Linear(self.sam.config.hidden_size, args.unified_vision_dim)
+        self.sam_projector = nn.Linear(self.sam.hidden_size, args.unified_vision_dim)
+        self.freeze_sam(args.sam_unfreeze_layers)
         # load dino
         self.dino = AutoModel.from_pretrained(args.vision_tower_dino)
         self.dino_projector = nn.Linear(self.dino.config.hidden_size, args.unified_vision_dim)
+        self.freeze_dino(args.dino_unfreeze_layers)
         # load rwkv
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
@@ -421,6 +423,20 @@ class VisualRWKV(pl.LightningModule):
             for p in self.clip.vision_model.encoder.layers[-unfreeze_layers:].parameters():
                 p.requires_grad = True
             self.clip.vision_model.post_layernorm.requires_grad_(True)
+    
+    def freeze_sam(self, unfreeze_layers=0):
+        self.sam.requires_grad_(False)
+        if unfreeze_layers > 0:
+            for p in self.sam.blocks[-unfreeze_layers:].parameters():
+                p.requires_grad = True
+            self.sam.neck.requires_grad_(True)
+
+    def freeze_dino(self, unfreeze_layers=0):
+        self.dino.requires_grad_(False)
+        if unfreeze_layers > 0:
+            for p in self.dino.encoder.layer[-unfreeze_layers:].parameters():
+                p.requires_grad = True
+            self.dino.layernorm.requires_grad_(True)
 
     def freeze_rwkv(self, num_layers_to_freeze=0, freeze_tiny_att=False):
         # freeze all layers including embedding and lm head
@@ -480,7 +496,8 @@ class VisualRWKV(pl.LightningModule):
             clip_features = self.clip_projector(clip_features)
             image_features.append(clip_features)
         if sam_images is not None:
-            sam_features = self.sam(sam_images).last_hidden_state
+            # [bs, 1024, 16, 16] -> [bs, 256, 1024]
+            sam_features = self.sam(sam_images).flatten(2).permute(0, 2, 1)
             sam_features = self.sam_projector(sam_features)
             image_features.append(sam_features)
         if dino_images is not None:
@@ -492,11 +509,11 @@ class VisualRWKV(pl.LightningModule):
    
     def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
-        emb_dtype = samples["images"].dtype
         clip_images = samples.get("clip_images", None)
         sam_images = samples.get("sam_images", None)
         dino_images = samples.get("dino_images", None)
         image_features  = self.encode_images(clip_images, sam_images, dino_images)
+        emb_dtype = image_features.dtype
         # prepare text embedding
         new_input_embeds = []
         new_labels = []
