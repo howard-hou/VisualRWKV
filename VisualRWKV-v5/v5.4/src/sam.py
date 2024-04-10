@@ -134,10 +134,7 @@ class ImageEncoderViT(nn.Module):
             LayerNorm2d(out_chans),
         )
 
-        
-        self.net_2 = nn.Conv2d(out_chans, out_chans*2, kernel_size=3, stride=2, padding=1, bias=False)
-        self.net_3 = nn.Conv2d(out_chans*2, out_chans*4, kernel_size=3, stride=2, padding=1, bias=False)
-        self.hidden_size = out_chans*4
+        self.hidden_size = out_chans#*4
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.patch_embed(x)
@@ -148,10 +145,6 @@ class ImageEncoderViT(nn.Module):
             x = blk(x)
 
         x = self.neck(x.permute(0, 3, 1, 2))
-        x = self.net_2(x)
-        x = self.net_3(x)
-
-
         return x
 
 
@@ -471,8 +464,12 @@ def _build_sam(
     
     if checkpoint is not None:
         state_dict = torch.load(checkpoint)
-        image_encoder.load_state_dict(state_dict, strict=True)
-        print(f'Loaded sam image encoder from {checkpoint}.')
+        new_state_dict = {}
+        for k in list(state_dict.keys()):
+            if k.startswith('image_encoder.'):
+                new_state_dict[k[len('image_encoder.'):]] = state_dict[k]
+        image_encoder.load_state_dict(new_state_dict, strict=True)
+        print(f'Loaded sam image encoder from {checkpoint}')
     return image_encoder
 
 

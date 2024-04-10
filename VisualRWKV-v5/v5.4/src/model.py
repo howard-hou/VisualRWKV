@@ -383,6 +383,22 @@ class RWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
 
+class SamProjector(nn.Module):
+    def __init__(self, hidden_size, unified_vision_dim):
+        super().__init__()
+        self.down_sampler = nn.Sequential(
+            nn.Conv2d(hidden_size, hidden_size*2, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.Conv2d(hidden_size*2, hidden_size*4, kernel_size=3, stride=2, padding=1, bias=False),
+        )
+        self.projector = nn.Linear(hidden_size*4, unified_vision_dim, bias=False)
+        self.layernorm = nn.LayerNorm(unified_vision_dim)
+
+
+    def forward(self, x):
+        x = self.down_sampler(x)
+        x = x.flatten(2).permute(0, 2, 1)
+        return self.layernorm(self.projector(x))
+
 
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
@@ -392,19 +408,25 @@ class VisualRWKV(pl.LightningModule):
         # load clip first
         if args.vision_tower_clip:
             self.clip = CLIPVisionModel.from_pretrained(args.vision_tower_clip)
-            self.clip_projector = nn.Linear(self.clip.config.hidden_size, args.unified_vision_dim)
+            self.clip_projector = nn.Sequential(
+                nn.Linear(self.clip.config.hidden_size, args.unified_vision_dim, bias=False),
+                nn.LayerNorm(args.unified_vision_dim)
+            )
             self.freeze_clip(args.clip_unfreeze_layers)
             merged_vision_dim += args.unified_vision_dim
         # load sam
         if args.vision_tower_sam:
             self.sam = build_sam_vit_b(checkpoint=args.vision_tower_sam)
-            self.sam_projector = nn.Linear(self.sam.hidden_size, args.unified_vision_dim)
+            self.sam_projector = SamProjector(self.sam.hidden_size, args.unified_vision_dim)
             self.freeze_sam(args.sam_unfreeze_layers)
             merged_vision_dim += args.unified_vision_dim
         # load dino
         if args.vision_tower_dino:
             self.dino = AutoModel.from_pretrained(args.vision_tower_dino)
-            self.dino_projector = nn.Linear(self.dino.config.hidden_size, args.unified_vision_dim)
+            self.dino_projector = nn.Sequential(
+                nn.Linear(self.dino.config.hidden_size, args.unified_vision_dim, bias=False),
+                nn.LayerNorm(args.unified_vision_dim)
+            )
             self.freeze_dino(args.dino_unfreeze_layers)
             merged_vision_dim += args.unified_vision_dim
         args.merged_vision_dim = merged_vision_dim
@@ -506,7 +528,7 @@ class VisualRWKV(pl.LightningModule):
             image_features.append(clip_features)
         if sam_images is not None:
             # [bs, 1024, 16, 16] -> [bs, 256, 1024]
-            sam_features = self.sam(sam_images).flatten(2).permute(0, 2, 1)
+            sam_features = self.sam(sam_images)
             sam_features = self.sam_projector(sam_features)
             image_features.append(sam_features)
         if dino_images is not None:
