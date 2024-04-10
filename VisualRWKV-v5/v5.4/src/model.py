@@ -219,8 +219,8 @@ class TinyAttention(MyModule):
         self.n_head = args.tiny_att_dim // args.head_size_a
         self.tiny_ln = nn.LayerNorm(args.n_embd)
         self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
-        self.tiny_k = nn.Linear(args.unified_vision_dim, args.tiny_att_dim, bias=False)
-        self.tiny_v = nn.Linear(args.unified_vision_dim, args.tiny_att_dim, bias=False)
+        self.tiny_k = nn.Linear(args.merged_vision_dim, args.tiny_att_dim, bias=False)
+        self.tiny_v = nn.Linear(args.merged_vision_dim, args.tiny_att_dim, bias=False)
         self.tiny_o = nn.Linear(args.tiny_att_dim, args.n_embd, bias=False)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
@@ -388,18 +388,26 @@ class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        merged_vision_dim = 0
         # load clip first
-        self.clip = CLIPVisionModel.from_pretrained(args.vision_tower_clip)
-        self.clip_projector = nn.Linear(self.clip.config.hidden_size, args.unified_vision_dim)
-        self.freeze_clip(args.clip_unfreeze_layers)
+        if args.vision_tower_clip:
+            self.clip = CLIPVisionModel.from_pretrained(args.vision_tower_clip)
+            self.clip_projector = nn.Linear(self.clip.config.hidden_size, args.unified_vision_dim)
+            self.freeze_clip(args.clip_unfreeze_layers)
+            merged_vision_dim += args.unified_vision_dim
         # load sam
-        self.sam = build_sam_vit_b(checkpoint=args.vision_tower_sam)
-        self.sam_projector = nn.Linear(self.sam.hidden_size, args.unified_vision_dim)
-        self.freeze_sam(args.sam_unfreeze_layers)
+        if args.vision_tower_sam:
+            self.sam = build_sam_vit_b(checkpoint=args.vision_tower_sam)
+            self.sam_projector = nn.Linear(self.sam.hidden_size, args.unified_vision_dim)
+            self.freeze_sam(args.sam_unfreeze_layers)
+            merged_vision_dim += args.unified_vision_dim
         # load dino
-        self.dino = AutoModel.from_pretrained(args.vision_tower_dino)
-        self.dino_projector = nn.Linear(self.dino.config.hidden_size, args.unified_vision_dim)
-        self.freeze_dino(args.dino_unfreeze_layers)
+        if args.vision_tower_dino:
+            self.dino = AutoModel.from_pretrained(args.vision_tower_dino)
+            self.dino_projector = nn.Linear(self.dino.config.hidden_size, args.unified_vision_dim)
+            self.freeze_dino(args.dino_unfreeze_layers)
+            merged_vision_dim += args.unified_vision_dim
+        args.merged_vision_dim = merged_vision_dim
         # load rwkv
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
@@ -492,7 +500,8 @@ class VisualRWKV(pl.LightningModule):
     def encode_images(self, clip_images=None, sam_images=None, dino_images=None):
         image_features = []
         if clip_images is not None:
-            clip_features = self.clip(clip_images).last_hidden_state
+            # [bs, 257, *] -> [bs, 256, *]
+            clip_features = self.clip(clip_images).last_hidden_state[:, 1:]
             clip_features = self.clip_projector(clip_features)
             image_features.append(clip_features)
         if sam_images is not None:
@@ -501,10 +510,12 @@ class VisualRWKV(pl.LightningModule):
             sam_features = self.sam_projector(sam_features)
             image_features.append(sam_features)
         if dino_images is not None:
-            dino_features = self.dino(dino_images).last_hidden_state
+            # [bs, 257, *] -> [bs, 256, *]
+            dino_features = self.dino(dino_images).last_hidden_state[:, 1:]
             dino_features = self.dino_projector(dino_features)
             image_features.append(dino_features)
-        image_features = torch.cat(image_features, dim=1)
+        # concat at the last dim
+        image_features = torch.cat(image_features, dim=-1)
         return image_features
    
     def preparing_embedding(self, samples, truncate=True):
