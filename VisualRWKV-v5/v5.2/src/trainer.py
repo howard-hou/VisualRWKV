@@ -28,7 +28,7 @@ class train_callback(pl.Callback):
         if args.lr_final == args.lr_init or args.epoch_count == 0:
             lr = args.lr_init
         else:
-            decay_total = args.epoch_count * args.epoch_steps
+            decay_total = (args.epoch_begin + args.epoch_count) * args.epoch_steps
             progress = (real_step - w_step + 1) / (decay_total - w_step)
             progress = min(1, max(0, progress))
 
