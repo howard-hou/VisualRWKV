@@ -215,6 +215,8 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
+    parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
+    parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ which layer
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)

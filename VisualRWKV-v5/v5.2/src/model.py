@@ -442,7 +442,8 @@ class VisualRWKV(pl.LightningModule):
         shift_labels = targets[..., 1:].contiguous()
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
                                shift_labels.view(-1))
-        return L2Wrap.apply(loss, logits)
+        loss = L2Wrap.apply(loss, logits)
+        return loss
     
     def training_step_end(self, batch_parts):
         if pl.__version__[0]!='2':

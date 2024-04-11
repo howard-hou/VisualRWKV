@@ -11,6 +11,8 @@ n_layer=$5
 eval_dir=$6
 vision_tower_path=$7
 image_position=$8
+tiny_att_dim=$9
+tiny_att_layer=${10}
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
 # 切换到脚本所在目录的上两级目录
@@ -30,6 +32,7 @@ echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_lay
 echo "eval dir: $eval_dir"
 echo "vision tower path: $vision_tower_path", "image_position: $image_position"
 echo "num of chunks: $CHUNKS"
+echo "tiny att dim: $tiny_att_dim, tiny att layer: $tiny_att_layer"
 
 for IDX in $(seq 0 $((CHUNKS-1))); do
     CUDA_VISIBLE_DEVICES=${GPULIST[$IDX]} python evaluate.py \
@@ -41,7 +44,8 @@ for IDX in $(seq 0 $((CHUNKS-1))); do
         --output_file $eval_dir/eval/gqa/answers/$SPLIT/$exp_name/${CHUNKS}_${IDX}.jsonl \
         --num_chunks $CHUNKS \
         --chunk_idx $IDX \
-        --image_position $image_position &
+        --image_position $image_position \
+        --tiny_att_dim $tiny_att_dim --tiny_att_layer $tiny_att_layer &
     echo "Started chunk $IDX"
 done
 
