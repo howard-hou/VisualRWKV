@@ -191,7 +191,7 @@ def eval_model(args):
                               }}, ensure_ascii=False)
         out_file.write(out_str + "\n")
         # update progress bar
-        if i % update_every == 0:
+        if i % update_every == 0 and i != 0:
             pbar.update(update_every)
         out_file.flush()
     out_file.close()

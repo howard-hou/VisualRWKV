@@ -21,7 +21,9 @@ if __name__ == "__main__":
     parser.add_argument("--n_embd", type=int)
     parser.add_argument("--n_layer", type=int)
     parser.add_argument("--eval_dir", type=str)
-    parser.add_argument("--vision_tower_path", type=str)
+    parser.add_argument("--vision_tower_clip", default="", type=str)  # empty means not use 
+    parser.add_argument("--vision_tower_sam", default="", type=str)  # empty means not use 
+    parser.add_argument("--vision_tower_dino", default="", type=str)  # empty means not use
     parser.add_argument("--image_position", type=str)
     parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
     parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers

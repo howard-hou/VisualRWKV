@@ -13,6 +13,11 @@ vision_tower_path=$7
 image_position=$8
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
+# 切换到脚本所在目录的上两级目录
+cd "$(dirname "$(dirname "$0")")/.."
+
+# 打印当前工作目录
+echo "Current working directory: $(pwd)"
 #
 SPLIT="llava_vqav2_mscoco_test-dev2015"
 CHUNKS=${#GPULIST[@]}

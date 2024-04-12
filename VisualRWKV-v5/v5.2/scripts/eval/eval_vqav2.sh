@@ -11,8 +11,15 @@ n_layer=$5
 eval_dir=$6
 vision_tower_path=$7
 image_position=$8
+tiny_att_dim=$9
+tiny_att_layer=${10}
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
+# 切换到脚本所在目录的上两级目录
+cd "$(dirname "$(dirname "$0")")/.."
+
+# 打印当前工作目录
+echo "Current working directory: $(pwd)"
 #
 SPLIT="llava_vqav2_mscoco_test-dev2015"
 CHUNKS=${#GPULIST[@]}
@@ -23,6 +30,7 @@ echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"
 echo "vision tower path: $vision_tower_path", "image_position: $image_position"
+echo "tiny att dim: $tiny_att_dim, tiny att layer: $tiny_att_layer"
 echo "num of chunks: $CHUNKS"
 
 for IDX in $(seq 0 $((CHUNKS-1))); do
@@ -35,6 +43,7 @@ for IDX in $(seq 0 $((CHUNKS-1))); do
         --output_file $eval_dir/eval/vqav2/answers/$SPLIT/$exp_name/${CHUNKS}_${IDX}.jsonl \
         --num_chunks $CHUNKS \
         --chunk_idx $IDX \
+        --tiny_att_dim $tiny_att_dim --tiny_att_layer $tiny_att_layer \
         --image_position $image_position &
     echo "Started chunk $IDX"
 done

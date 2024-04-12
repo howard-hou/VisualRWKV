@@ -214,13 +214,18 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
-    parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
+    parser.add_argument("--vision_tower_clip", default="", type=str)  # empty means not use 
+    parser.add_argument("--vision_tower_sam", default="", type=str)  # empty means not use 
+    parser.add_argument("--vision_tower_dino", default="", type=str)  # empty means not use
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--tiny_att_dim", default=-1, type=int)  # tiny attention dim
     parser.add_argument("--tiny_att_layer", default=-1, type=int)  # tiny attention @ last num layers
-    parser.add_argument("--vit_unfreeze_layers", default=0, type=int) 
+    parser.add_argument("--clip_unfreeze_layers", default=0, type=int) 
+    parser.add_argument("--sam_unfreeze_layers", default=0, type=int) 
+    parser.add_argument("--dino_unfreeze_layers", default=0, type=int) 
+    parser.add_argument("--unified_vision_dim", default=1024, type=int)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)
