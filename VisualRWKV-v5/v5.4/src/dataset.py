@@ -205,7 +205,7 @@ class MyDataset(Dataset):
                 crop_size = args.clip_image_processor.crop_size
                 data_dict['clip_images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
             if hasattr(args, "sam_image_processor"):
-                crop_size = args.sam_image_processor.crop_size
+                crop_size = args.sam_image_processor.pad_size
                 data_dict['sam_images'] = torch.zeros(3, crop_size['height'], crop_size['width'])
             if hasattr(args, "dino_image_processor"):
                 crop_size = args.dino_image_processor.crop_size
