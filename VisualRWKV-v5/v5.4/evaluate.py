@@ -112,6 +112,10 @@ def get_input_image_tensor(line, image_folder, clip_image_processor=None,
             image = Image.open(image_folder / image_file)
         else: # image is base64 encoded
             image = load_image_from_base64(image_file)
+        # convert to RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        # preprocess image
         if clip_image_processor is not None:
             clip_image = clip_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
         else:
