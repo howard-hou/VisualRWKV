@@ -13,7 +13,8 @@ from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop, load_image_from_base64
-from transformers import CLIPImageProcessor
+from transformers import CLIPImageProcessor, AutoImageProcessor
+from pytorch_lightning.utilities import rank_zero_info
 
 
 def split_list(lst, n):
@@ -103,27 +104,44 @@ def get_input_text(line, dataset_name):
         else:
             raise ValueError("Cannot find input text in line: {}".format(line))
     
-def get_input_image_tensor(line, image_folder, image_processor, detail):
+def get_input_image_tensor(line, image_folder, clip_image_processor=None, 
+                           sam_image_processor=None, dino_image_processor=None):
     if "image" in line:
         image_file = line["image"]
         if image_folder is not None:
             image = Image.open(image_folder / image_file)
         else: # image is base64 encoded
             image = load_image_from_base64(image_file)
-        if args.detail == 'high':
-            image = [image] + gpt4v_crop(image)
-            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
+        if clip_image_processor is not None:
+            clip_image = clip_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
         else:
-            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+            clip_image = None
+        if sam_image_processor is not None:
+            sam_image = sam_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+        else:
+            sam_image = None
+        if dino_image_processor is not None:
+            dino_image = dino_image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+        else:
+            dino_image = None
     else:
         # image does not exist in the data, fill with zeros
-        if detail == 'high':
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
+        if clip_image_processor is not None:
+            crop_size = clip_image_processor.crop_size
+            clip_image = torch.zeros(3, crop_size['height'], crop_size['width'])
         else:
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
-    return image_tensor
+            clip_image = None
+        if sam_image_processor is not None:
+            crop_size = sam_image_processor.pad_size
+            sam_image = torch.zeros(3, crop_size['height'], crop_size['width'])
+        else:
+            sam_image = None
+        if dino_image_processor is not None:
+            crop_size = dino_image_processor.crop_size
+            dino_image = torch.zeros(3, crop_size['height'], crop_size['width'])
+        else:
+            dino_image = None
+    return dict(clip_images=clip_image, sam_images=sam_image, dino_images=dino_image)
 
 def eval_model(args):
     from src.model import VisualRWKV
@@ -138,7 +156,21 @@ def eval_model(args):
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    if args.vision_tower_clip:
+        clip_image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_clip)
+        rank_zero_info(f"using clip image encoder: {args.vision_tower_clip}")
+    else:
+        clip_image_processor = None
+    if args.vision_tower_sam:
+        sam_image_processor = AutoImageProcessor.from_pretrained('facebook/sam-vit-base')
+        rank_zero_info(f"using sam image encoder: facebook/sam-vit-base")
+    else:
+        sam_image_processor = None
+    if args.vision_tower_dino:
+        dino_image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_dino)
+        rank_zero_info(f"using dino image encoder: {args.vision_tower_dino}")
+    else:
+        dino_image_processor = None
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
@@ -159,8 +191,11 @@ def eval_model(args):
 
         conversations = process_image_tokens_in_conversations(conv.conversations, image_position=args.image_position)
 
-        image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
-        image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
+        image_tensor_dict = get_input_image_tensor(line, image_folder, clip_image_processor, 
+                                                   sam_image_processor, dino_image_processor)
+        for k, v in image_tensor_dict.items():
+            if v is not None:
+                image_tensor_dict[k] = v.unsqueeze(0).bfloat16().to(args.device)
 
         data_dict = preprocess(
             conversations,
@@ -176,7 +211,7 @@ def eval_model(args):
         with torch.inference_mode():
             output_ids = model.generate(
                 input_ids,
-                images=image_tensor,
+                images=image_tensor_dict,
                 do_sample=False,
                 temperature=args.temperature,
                 top_p=args.top_p,
