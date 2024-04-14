@@ -121,7 +121,7 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             crop_size = image_processor.crop_size
             image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
         else:
-            crop_size = args.image_processor.crop_size
+            crop_size = image_processor.crop_size
             image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
     return image_tensor
 
@@ -131,9 +131,7 @@ def eval_model(args):
     model_name = model_path.parent.name
     # Model
     model = VisualRWKV(args)
-    state_dict = torch.load(args.model_path, map_location='cpu')
-    state_dict = {k: v for k, v in state_dict.items() if "queue" not in k}
-    msg = model.load_state_dict(state_dict, strict=False)
+    msg = model.load_state_dict(torch.load(model_path), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
@@ -146,7 +144,9 @@ def eval_model(args):
     image_folder = Path(args.image_folder) if args.image_folder is not None else None
 
     out_file = open(output_file, "w")
-    for line in tqdm(questions):
+    pbar = tqdm(total=len(questions))
+    update_every = len(questions) // 100
+    for i, line in enumerate(questions):
         idx = get_question_id(line)
         input_text = get_input_text(line, dataset_name=args.dataset_name)
 
@@ -154,7 +154,7 @@ def eval_model(args):
         conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
-        conversations = process_image_tokens_in_conversations(conv.conversations)
+        conversations = process_image_tokens_in_conversations(conv.conversations, image_position=args.image_position)
 
         image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
         image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
@@ -182,15 +182,20 @@ def eval_model(args):
 
         output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
 
-        out_file.write(json.dumps({"question_id": idx,
-                                   "prompt": cur_prompt,
-                                   "text": output,
-                                   "model_id": model_name,
-                                   "metadata": {
-                                       "image_file": line.get("image", None),
-                                   }}, ensure_ascii=False) + "\n")
+        out_str = json.dumps({"question_id": idx,
+                              "prompt": cur_prompt,
+                              "text": output,
+                              "model_id": model_name,
+                              "metadata": {
+                                  "image_file": line.get("image", None),
+                              }}, ensure_ascii=False)
+        out_file.write(out_str + "\n")
+        # update progress bar
+        if i % update_every == 0 and i != 0:
+            pbar.update(update_every)
         out_file.flush()
     out_file.close()
+    pbar.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -208,11 +213,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--queue_size", type=int, default=16) # for contrastive learning
-    parser.add_argument("--vision_ctx_len", type=int, default=577) # number of tokens in vision context
-    parser.add_argument("--constraive_reduction", type=str, default='mean', choices=['mean', 'weighted']) # try 'mean' or 'weighted'
-    parser.add_argument("--constraive_loss_weight", type=float, default=1.0) # try 0.1 / 0.2 / 0.5 / 1.0
-    parser.add_argument("--detail", type=str, default="high")
+    parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
@@ -226,6 +227,7 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dataset_name", type=str, default="default")
+    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)

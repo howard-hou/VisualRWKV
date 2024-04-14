@@ -35,13 +35,25 @@ def get_pred_idx(prediction, choices, options):
         return -1
 
 
+def load_predictions(result_file):
+    predictions = []
+    for line in open(result_file):
+        try:
+            predictions.append(json.loads(line))
+        except Exception as e:
+            print(e)
+            print('error line: ', line)
+    return predictions
+
+
 if __name__ == "__main__":
     args = get_args()
 
     base_dir = args.base_dir
     split_indices = json.load(open(os.path.join(base_dir, "pid_splits.json")))[args.split]
     problems = json.load(open(os.path.join(base_dir, "problems.json")))
-    predictions = [json.loads(line) for line in open(args.result_file)]
+    predictions = load_predictions(args.result_file)
+    print("num of loaded predictions:", len(predictions))
     predictions = {pred['question_id']: pred for pred in predictions}
     split_problems = {idx: problems[idx] for idx in split_indices}
 

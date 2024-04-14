@@ -15,7 +15,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Model Constants
 IGNORE_INDEX = -100
 IMAGE_TOKEN_INDEX = -200
-PAD_TOKEN_INDEX = 0
 DEFAULT_IMAGE_TOKEN = "<image>"
 STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
@@ -23,6 +22,7 @@ DEFAULT_STOP_TOKEN = "\n\n"
 
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
+    image_position: str = "first", # "first", "middle" or "last"
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
@@ -33,7 +33,14 @@ def process_image_tokens_in_conversations(
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+            if image_position == "first":
+                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+            elif image_position == "middle":
+                sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+            elif image_position == "last":
+                sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
+            else:
+                raise ValueError(f"Unknown image_position: {image_position}, must be first, middle or last.")
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
@@ -71,6 +78,7 @@ def _add_speaker_and_signal(conversations):
             sentence["value"] = from_str + ":"
     return conversations
 
+
 def tokenize_with_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX):
     prompt_chunks = [tokenizer.encode(chunk) for chunk in prompt.split(DEFAULT_IMAGE_TOKEN)]
 
@@ -82,7 +90,6 @@ def tokenize_with_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_I
     return input_ids[:-1] # remove last image token
 
 
-
 def mask_targets_from_human(targets, tokenized_lens, speakers):
     cur_idx = 0
     for tokenized_len, speaker in zip(tokenized_lens, speakers):
@@ -90,10 +97,11 @@ def mask_targets_from_human(targets, tokenized_lens, speakers):
             targets[cur_idx:cur_idx + tokenized_len] = IGNORE_INDEX
         cur_idx += tokenized_len
 
+
 def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
-    # keep the last max_len targets, because a lot of first tokens are masked
-    input_ids = input_ids[-max_len:]
-    targets = targets[-max_len:]
+    # keep the first max_len tokens to make sure instruction complete
+    input_ids = input_ids[:max_len]
+    targets = targets[:max_len]
     padding_len = max_len - len(input_ids)
     if padding_len <= 0:
         return input_ids, targets
@@ -114,23 +122,21 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_
     """
     # add end signal and concatenate together
     conversations = _add_speaker_and_signal(conversations)
-    conversation = "".join([sentence["value"] for sentence in conversations])
-    if has_image:
-        input_ids = tokenize_with_image_token(conversation, tokenizer)
-    else:
-        input_ids = tokenizer.encode(conversation)
+    input_text = "".join([sentence["value"] for sentence in conversations])
+    input_ids, tokenized_lens, speakers = [], [], []
+    for conversation in conversations:
+        if has_image:
+            input_ids.extend(tokenize_with_image_token(conversation["value"], tokenizer))
+        else:
+            input_ids.extend(tokenizer.encode(conversation["value"]))
+        tokenized_lens.append(len(input_ids))
+        speakers.append(conversation["from"])
     input_ids = torch.tensor(input_ids, dtype=torch.long)
     targets = copy.deepcopy(input_ids)
-    if has_image:
-        tokenized_lens = [len(tokenize_with_image_token(s["value"], tokenizer)) for s in conversations]
-    else:
-        tokenized_lens = [len(tokenizer.encode(s["value"])) for s in conversations]
-    speakers = [sentence["from"] for sentence in conversations]
     mask_targets_from_human(targets, tokenized_lens, speakers)
     if do_pad_to_max_length:
         input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
-    return dict(input_ids=input_ids, labels=targets, input_text=conversation)
-
+    return dict(input_ids=input_ids, labels=targets, input_text=input_text)
 
 
 class MyDataset(Dataset):
@@ -166,7 +172,8 @@ class MyDataset(Dataset):
                 image = processor(images=image, return_tensors='pt')['pixel_values']
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values']
-            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
+            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
+                                                                  image_position=args.image_position)
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
@@ -175,7 +182,7 @@ class MyDataset(Dataset):
             self.tokenizer,
             has_image=('image' in sample),
             ctx_len=args.ctx_len,
-            pad_token_id=PAD_TOKEN_INDEX)
+            pad_token_id=0)
         
         # image exist in the data
         if 'image' in sample:

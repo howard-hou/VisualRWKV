@@ -54,28 +54,16 @@ if __name__ == "__main__":
 
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
-    parser.add_argument("--grid_size", type=int, default=-1) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--queue_size", type=int, default=16) # for contrastive learning
-    parser.add_argument("--vision_ctx_len", type=int, default=577) # number of tokens in vision context
-    parser.add_argument("--constraive_reduction", type=str, default='mean', choices=['mean', 'weighted']) # try 'mean' or 'weighted'
-    parser.add_argument("--constraive_loss_weight", type=float, default=1.0) # try 0.1 / 0.2 / 0.5 / 1.0
+    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
-    parser.add_argument("--my_accumulate_grad_batches", default=1, type=int)
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
+    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--image_scanning", default='unidirection', type=str, 
+                        choices=['unidirection', 'bidirection', 'cross'])  # 'unidirection' or 'bidirection' or 'cross'
 
-
-    if pl.__version__[0]=='2':
-        parser.add_argument("--accelerator", default="gpu", type=str)
-        parser.add_argument("--strategy", default="auto", type=str)
-        parser.add_argument("--devices", default=1, type=int)
-        parser.add_argument("--num_nodes", default=1, type=int)
-        parser.add_argument("--precision", default="fp16", type=str)
-        parser.add_argument("--accumulate_grad_batches", default=1, type=int)
-    else:
-        parser = Trainer.add_argparse_args(parser)
+    parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
-    args.accumulate_grad_batches = args.my_accumulate_grad_batches
 
     ########################################################################################################
 
@@ -151,9 +139,6 @@ if __name__ == "__main__":
 
     assert args.data_type in ["json"]
 
-    if args.lr_final == 0 or args.lr_init == 0:
-        rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
-
     assert args.precision in ["fp32", "tf32", "fp16", "bf16"]
     os.environ["RWKV_FLOAT_MODE"] = args.precision
     if args.precision == "fp32":
@@ -190,32 +175,27 @@ if __name__ == "__main__":
     from transformers import CLIPImageProcessor
 
     args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    args.image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    if args.vision_tower_name == 'dummy':
+        args.image_processor = CLIPImageProcessor()
+    else:
+        args.image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
 
     train_data = MyDataset(args)
     args.vocab_size = train_data.vocab_size
 
     from src.model import VisualRWKV
-    model = VisualRWKV(args)
+    # 256gb cpu memory is not enough for 8 gpus
+    # to use 6 gpus on 256gb cpu memory, use .half() to save memory
+    model = VisualRWKV(args).half()
     if args.model_path:
-        state_dict = torch.load(args.model_path, map_location='cpu')
-        state_dict = {k: v for k, v in state_dict.items() if "queue" not in k}
-        msg = model.load_state_dict(state_dict, strict=False)
+        msg = model.load_state_dict(torch.load(args.model_path, map_location='cpu'), strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
 
-    if pl.__version__[0]=='2':
-        trainer = Trainer(accelerator=args.accelerator,strategy=args.strategy,devices=args.devices,num_nodes=args.num_nodes,precision=args.precision,
-        logger=args.logger,callbacks=[train_callback(args)],max_epochs=args.max_epochs,check_val_every_n_epoch=args.check_val_every_n_epoch,num_sanity_val_steps=args.num_sanity_val_steps,
-        log_every_n_steps=args.log_every_n_steps,enable_checkpointing=args.enable_checkpointing,accumulate_grad_batches=args.accumulate_grad_batches,gradient_clip_val=args.gradient_clip_val)
-    else:
-        trainer = Trainer.from_argparse_args(
-            args,
-            callbacks=[train_callback(args)],
-        )
+    trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
     if trainer.global_rank == 0:
         for n in model.state_dict():
@@ -223,12 +203,13 @@ if __name__ == "__main__":
             shape = [i for i in shape if i != 1]
             if len(shape) > 1:
                 print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
-            elif len(shape) == 1:
+            else:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
 
     if "deepspeed" in args.strategy:
         trainer.strategy.config["zero_optimization"]["allgather_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
         trainer.strategy.config["zero_optimization"]["reduce_bucket_size"] = args.ds_bucket_mb * 1000 * 1000
+        rank_zero_info('deepspeed config:', trainer.strategy.config)
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, 

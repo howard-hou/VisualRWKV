@@ -3,25 +3,12 @@ import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
-import numpy as np
 
 def my_save(args, trainer, dd, ff):
-    if '14b-run1' in ff:
-        fn = ff.split('/')[-1]
-        fff = '/dev/shm/' + fn
-        torch.save(dd, fff)
-        subprocess.Popen(f" aws s3 mv {fff} s3://rwkv-14b-4k/{fn} --quiet", shell=True)
-    elif ('world/14b' in ff) or ('world/7b' in ff):
-        aa = ff.split('/')[1]
-        fn = ff.split('/')[-1]
-        fff = f'/dev/shm/{aa}-{fn}'
-        torch.save(dd, fff)
-        subprocess.Popen(f" aws s3 mv {fff} s3://rwkv-world/{aa}-{fn} --quiet", shell=True)
+    if 'deepspeed_stage_3' in args.strategy:
+        trainer.save_checkpoint(ff, weights_only=True)
     else:
-        if 'deepspeed_stage_3' in args.strategy:
-            trainer.save_checkpoint(ff, weights_only=True)
-        else:
-            torch.save(dd, ff)
+        torch.save(dd, ff)
 
 class train_callback(pl.Callback):
     def __init__(self, args):
@@ -34,22 +21,20 @@ class train_callback(pl.Callback):
         # if args.cuda_cleanup > 0:
         #     torch.cuda.empty_cache()
         # global_step is update step, influence by gradient accumulation
-        real_step = trainer.global_step * args.my_accumulate_grad_batches + args.epoch_begin * args.epoch_steps
+        real_step = trainer.global_step * args.accumulate_grad_batches + args.epoch_begin * args.epoch_steps
 
         # LR schedule, cosine with warmup
         w_step = args.warmup_steps
         if args.lr_final == args.lr_init or args.epoch_count == 0:
             lr = args.lr_init
         else:
-            decay_total = args.epoch_count * args.epoch_steps
+            decay_total = (args.epoch_begin + args.epoch_count) * args.epoch_steps
             progress = (real_step - w_step + 1) / (decay_total - w_step)
             progress = min(1, max(0, progress))
 
-            if args.lr_final == 0 or args.lr_init == 0:  # linear decay
-                lr = args.lr_init + (args.lr_final - args.lr_init) * progress
-            else:  # cosine decay
-                cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
-                lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
+            # cosine decay
+            cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
+            lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
 
         if real_step < w_step:
             lr = lr * (0.1 + 0.9 * real_step / w_step)
@@ -153,11 +138,7 @@ class train_callback(pl.Callback):
                     print('Error\n\n', e, '\n\n')
 
         if trainer.is_global_zero:  # logging
-            lm_loss = np.mean(trainer.lm_loss_all)
-            constraive_loss = np.mean(trainer.constraive_loss_all)
-            trainer.my_log.write(
-                f"{args.epoch_begin + trainer.current_epoch} {lm_loss:.3f} {constraive_loss:.3f} {trainer.my_epoch_loss:.3f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n"
-                )
+            trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
             trainer.my_log.flush()
 
             trainer.my_loss_sum = 0
