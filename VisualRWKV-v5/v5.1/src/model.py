@@ -349,7 +349,7 @@ class VisualRWKV(pl.LightningModule):
         self.proj = nn.Linear(self.get_projector_hidden_size(), args.n_embd, bias=False)
 
     def get_projector_hidden_size(self):
-        if self.args.image_scanning == 'unidirection':
+        if "unidirection" in self.args.image_scanning:
             return self.vit.config.hidden_size
         if self.args.image_scanning == 'bidirection':
             return self.vit.config.hidden_size * 2
@@ -435,7 +435,9 @@ class VisualRWKV(pl.LightningModule):
         B, L, D = image_features.shape
         H, W = int(L**0.5), int(L**0.5)
         if self.args.image_scanning == 'unidirection':
-            return image_features
+            return torch.cat((image_features, cls_features), dim=1)
+        if self.args.image_scanning == 'unidirection_reverse':
+            return torch.cat((image_features.flip(1), cls_features), dim=1)
         if self.args.image_scanning == 'bidirection':
             return torch.cat((image_features, image_features.flip(1)), dim=-1)
         if self.args.image_scanning == 'cross':
@@ -461,6 +463,15 @@ class VisualRWKV(pl.LightningModule):
                                       stride=grid_stride)
         image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
         return torch.cat((cls_features, image_features), dim=1)
+    
+    def get_max_image_token_indice(self, samples):
+        max_image_token_indice = 0
+        for cur_input_ids in samples["input_ids"]:
+            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
+            if num_images == 1:
+                image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
+                max_image_token_indice = max(max_image_token_indice, image_token_indice)
+        return max_image_token_indice
    
     def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
@@ -470,6 +481,8 @@ class VisualRWKV(pl.LightningModule):
         # 
         new_input_embeds = []
         new_labels = []
+        max_image_token_indice = self.get_max_image_token_indice(samples)
+        self.max_image_token_indice = max_image_token_indice
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0: # no image in this sample
@@ -478,9 +491,13 @@ class VisualRWKV(pl.LightningModule):
             elif num_images == 1: # only one image in this sample
                 image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
                 cur_labels = samples["labels"][idx]
-                # first text part
-                cur_new_input_embeds = [self.rwkv.emb(cur_input_ids[:image_token_indice])]
-                cur_new_labels = [cur_labels[:image_token_indice]]
+                # first text part, left paded
+                cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)
+                cur_new_input_ids[-image_token_indice:] = cur_input_ids[:image_token_indice]
+                cur_new_labels = torch.full((max_image_token_indice,), IGNORE_INDEX, device=device, dtype=label_dtype)
+                cur_new_labels[-image_token_indice:] = cur_labels[:image_token_indice]
+                cur_new_input_embeds = [self.rwkv.emb(cur_new_input_ids)]
+                cur_new_labels = [cur_new_labels]
                 # image part
                 cur_image_features = image_features[idx]
                 cur_new_input_embeds.append(cur_image_features)
