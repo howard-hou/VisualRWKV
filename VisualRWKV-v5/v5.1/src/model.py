@@ -302,8 +302,6 @@ class RWKV(pl.LightningModule):
 
     def forward(self, x):
         args = self.args
-        # B, T, D = x.size()
-        # assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
         if args.dropout > 0:
             x = self.drop0(x)
@@ -346,15 +344,7 @@ class VisualRWKV(pl.LightningModule):
         else:
             self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
-        self.proj = nn.Linear(self.get_projector_hidden_size(), args.n_embd, bias=False)
-
-    def get_projector_hidden_size(self):
-        if "unidirection" in self.args.image_scanning:
-            return self.vit.config.hidden_size
-        if self.args.image_scanning == 'bidirection':
-            return self.vit.config.hidden_size * 2
-        if self.args.image_scanning == 'cross':
-            return self.vit.config.hidden_size * 4
+        self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -401,8 +391,70 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets = self.preparing_embedding(samples)
-        logits = self.rwkv(x)
+        if self.args.image_scanning == 'unidirection':
+            logits = self.rwkv(x)
+        if self.args.image_scanning == 'bidirection':
+            logits = self.bidirectional_forward(x)
+        if self.args.image_scanning == 'cross':
+            logits = self.cross_forward(x)
         return logits, targets
+    
+    def bidirectional_forward(self, x):
+        args = self.args
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for i, block in enumerate(self.rwkv.blocks):
+            do_reverse = (i % 2 == 1)
+            if do_reverse: # reverse
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+            
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+            
+            if do_reverse: # reverse back
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def cross_forward(self, x):
+        args = self.args
+        B, T, C = x.size()
+        H = W = int((self.img_end-self.img_start)**0.5)
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for i, block in enumerate(self.rwkv.blocks):
+            do_transpose = (i % 4 >=2) 
+            if do_transpose: # transpose
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
+            do_reverse = (i % 2 == 1)
+            if do_reverse: # reverse
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+            
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+            
+            if do_reverse: # reverse back
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+            if do_transpose: # transpose back
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
@@ -426,33 +478,17 @@ class VisualRWKV(pl.LightningModule):
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)[:, 0, :, :]
         image_features = self.grid_pooling(image_features)
-        image_features = self.image_scanning_merge(image_features)
         return self.proj(image_features)
     
-    def image_scanning_merge(self, image_features):
-        cls_features = image_features[:, 0:1, :]
-        image_features = image_features[:, 1:, :] #drop cls token
-        B, L, D = image_features.shape
-        H, W = int(L**0.5), int(L**0.5)
-        if self.args.image_scanning == 'unidirection':
-            return torch.cat((image_features, cls_features), dim=1)
-        if self.args.image_scanning == 'unidirection_reverse':
-            return torch.cat((image_features.flip(1), cls_features), dim=1)
-        if self.args.image_scanning == 'bidirection':
-            return torch.cat((image_features, image_features.flip(1)), dim=-1)
-        if self.args.image_scanning == 'cross':
-            image_features_T = image_features.view(B, H, W, D).permute(0, 2, 1, 3).reshape(B, L, D).contiguous()
-            return torch.cat((image_features, image_features.flip(1), image_features_T, image_features_T.flip(1)), dim=-1)
-    
     def grid_pooling(self, image_features):
-        if self.args.grid_size == -1: # no grid pooling
-            return image_features
-        if self.args.grid_size == 0: # take cls token
-            return image_features[:, 0:1, :]
-        if self.args.grid_size == 1: # global avg pooling
-            return image_features.mean(dim=1, keepdim=True)
         cls_features = image_features[:, 0:1, :]
         image_features = image_features[:, 1:, :] #drop cls token
+        if self.args.grid_size == -1: # no grid pooling
+            return torch.cat((image_features, cls_features), dim=1)
+        if self.args.grid_size == 0: # take cls token
+            return cls_features
+        if self.args.grid_size == 1: # global avg pooling
+            return torch.cat((image_features.mean(dim=1, keepdim=True), cls_features), dim=1)
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D)
@@ -462,7 +498,7 @@ class VisualRWKV(pl.LightningModule):
                                       kernel_size=grid_stride, 
                                       stride=grid_stride)
         image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
-        return torch.cat((cls_features, image_features), dim=1)
+        return torch.cat((image_features, cls_features), dim=1)
     
     def get_max_image_token_indice(self, samples):
         max_image_token_indice = 0
@@ -482,7 +518,8 @@ class VisualRWKV(pl.LightningModule):
         new_input_embeds = []
         new_labels = []
         max_image_token_indice = self.get_max_image_token_indice(samples)
-        self.max_image_token_indice = max_image_token_indice
+        self.img_start = max_image_token_indice
+        self.img_end = max_image_token_indice + (image_features.shape[1] - 1) # exclude cls token
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0: # no image in this sample
