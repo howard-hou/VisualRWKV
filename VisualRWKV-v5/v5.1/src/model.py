@@ -398,8 +398,8 @@ class VisualRWKV(pl.LightningModule):
             logits = self.rwkv(x, x_emb=image_features)
         if self.args.image_scanning == 'bidirection':
             logits = self.bidirectional_forward(x, x_emb=image_features)
-        if self.args.image_scanning == 'cross':
-            logits = self.cross_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'multidirection':
+            logits = self.multidirectional_forward(x, x_emb=image_features)
         return logits, targets
     
     def bidirectional_forward(self, x, x_emb=None):
@@ -430,7 +430,7 @@ class VisualRWKV(pl.LightningModule):
 
         return x
     
-    def cross_forward(self, x, x_emb=None):
+    def multidirectional_forward(self, x, x_emb=None):
         args = self.args
         B, T, C = x.size()
         H = W = int((self.img_end-self.img_start)**0.5)
