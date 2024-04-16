@@ -311,9 +311,6 @@ class RWKV(pl.LightningModule):
                 x = deepspeed.checkpointing.checkpoint(block, x)
             else:
                 x = block(x)
-            # skip connection
-            if x_emb is not None:
-                x[:, self.img_start:self.img_end+1, :] += x_emb
 
         x = self.ln_out(x)
 
@@ -395,12 +392,33 @@ class VisualRWKV(pl.LightningModule):
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
         if self.args.image_scanning == 'unidirection':
-            logits = self.rwkv(x, x_emb=image_features)
+            logits = self.unidirectional_forward(x, x_emb=image_features)
         if self.args.image_scanning == 'bidirection':
             logits = self.bidirectional_forward(x, x_emb=image_features)
         if self.args.image_scanning == 'multidirection':
             logits = self.multidirectional_forward(x, x_emb=image_features)
         return logits, targets
+    
+    def unidirectional_forward(self, x, x_emb=None):
+        args = self.args
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for block in self.rwkv.blocks:
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+            # skip connection
+            if x_emb is not None:
+                x[:, self.img_start:self.img_end+1, :] += x_emb
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
     
     def bidirectional_forward(self, x, x_emb=None):
         args = self.args
@@ -531,7 +549,7 @@ class VisualRWKV(pl.LightningModule):
             else:
                 truncated_input_embeds.append(x[-self.args.ctx_len:])
                 truncated_labels.append(y[-self.args.ctx_len:])
-            return truncated_input_embeds, truncated_labels
+        return truncated_input_embeds, truncated_labels
    
     def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
