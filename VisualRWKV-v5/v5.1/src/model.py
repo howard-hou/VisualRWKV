@@ -624,16 +624,22 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels, truncate=False)
+        x, _, image_features = self.preparing_embedding(sampels, truncate=False)
         # generate
         generated = []
         for i in range(max_new_tokens):
-            logits = self.rwkv(x)[:, -1, :]
+            if self.args.image_scanning == 'unidirection':
+                logits = self.unidirectional_forward(x, x_emb=image_features)
+            if self.args.image_scanning == 'bidirection':
+                logits = self.bidirectional_forward(x, x_emb=image_features)
+            if self.args.image_scanning == 'multidirection':
+                logits = self.multidirectional_forward(x, x_emb=image_features)
+            next_logit = logits[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
                 # [1, vocab_size] -> [1, 1]
-                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+                next_token = torch.argmax(next_logit, dim=-1, keepdim=True)
             generated.append(next_token.item())
             if generated[-1] == stop_token_idx:
                 break
