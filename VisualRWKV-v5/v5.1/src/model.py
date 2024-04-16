@@ -457,7 +457,7 @@ class VisualRWKV(pl.LightningModule):
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
             # skip connection
             if x_emb is not None:
-                x[:, self.img_start:self.img_end+1, :] += x_emb
+                x[:, self.img_start:self.img_end+1, :] += x_emb # with cls token
 
         x = self.rwkv.ln_out(x)
 
@@ -517,6 +517,21 @@ class VisualRWKV(pl.LightningModule):
                 image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
                 max_image_token_indice = max(max_image_token_indice, image_token_indice)
         return max_image_token_indice
+    
+    def truncate_input(self, new_input_embeds, new_labels):
+        # prioritize retaining the labels at the beginning
+        # if there are no valid labels at the beginning, retain the labels from the end
+        truncated_input_embeds = []
+        truncated_labels = []
+        for x, y in zip(new_input_embeds, new_labels):
+            valid_labels = [i for i in y[:self.args.ctx_len] if i != IGNORE_INDEX]
+            if valid_labels:
+                truncated_input_embeds.append(x[:self.args.ctx_len])
+                truncated_labels.append(y[:self.args.ctx_len])
+            else:
+                truncated_input_embeds.append(x[-self.args.ctx_len:])
+                truncated_labels.append(y[-self.args.ctx_len:])
+            return truncated_input_embeds, truncated_labels
    
     def preparing_embedding(self, samples, truncate=True):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
@@ -567,8 +582,7 @@ class VisualRWKV(pl.LightningModule):
         # Truncate sequences to max length as image embeddings can make the sequence longer
         # keep the first `ctx_len` tokens, to make sure instruction complete
         if truncate:
-            new_input_embeds = [x[:self.args.ctx_len] for x in new_input_embeds]
-            new_labels = [x[:self.args.ctx_len] for x in new_labels]
+            new_input_embeds, new_labels = self.truncate_input(self, new_input_embeds, new_labels)
         # Combine them
         max_len = max(x.shape[0] for x in new_input_embeds)
         batch_size = len(new_input_embeds)
