@@ -146,6 +146,8 @@ class MyDataset(Dataset):
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
         self.list_data_dict = json.load(open(args.data_file, "r"))
+        # shuffle the data, but deterministically
+        self.list_data_dict_reverse = [x for x in reversed(self.list_data_dict)]
         self.data_size = len(self.list_data_dict)
         self.magic_prime = largest_3n_plus_2_prime(self.data_size)
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
@@ -161,8 +163,13 @@ class MyDataset(Dataset):
         step = epoch * self.samples_per_epoch + (idx * world_size) + rank
         # use a magic prime to sample the dataset deterministically yet randomly enough
         sample_idx = (step * step * step) % self.magic_prime
-        # print(f"step {step} sample idx {sample_idx} epoch {epoch} idx {idx} rank {rank}/{world_size} magic prime {self.magic_prime}")
-        sample = self.list_data_dict[sample_idx]
+        # first epoch use the original data, then use the reversed data(avoid overfitting)
+        # normally, we don't train for more than 2 epoch
+        if (step * step * step) < self.magic_prime:
+            sample = self.list_data_dict[sample_idx]
+        else:
+            sample = self.list_data_dict_reverse[sample_idx]
+
         if 'image' in sample:
             image_file = sample['image']
             image_folder = args.image_folder
@@ -197,24 +204,4 @@ class MyDataset(Dataset):
                 crop_size = args.image_processor.crop_size
                 data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
         return data_dict
-    
 
-if __name__ == "__main__":
-    from argparse import ArgumentParser
-
-    parser = ArgumentParser()
-    parser.add_argument("--data_file", type=str, default="data.json")
-    parser.add_argument("--vocab_size", type=int, default=10000)
-    parser.add_argument("--image_folder", type=str, default="images")
-    parser.add_argument("--image_processor", type=str, default="images")
-    parser.add_argument("--tokenizer", type=str, default="images")
-    parser.add_argument("--epoch_steps", type=int, default=100)
-    parser.add_argument("--micro_bsz", type=int, default=1)
-    parser.add_argument("--ctx_len", type=int, default=512)
-    args = parser.parse_args()
-    from rwkv.rwkv_tokenizer import TRIE_TOKENIZER
-    from transformers import CLIPImageProcessor
-    args.tokenizer = TRIE_TOKENIZER("rwkv_vocab_v20230424.txt")
-    args.image_processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    dataset = MyDataset(args)
-    print(dataset[0])
