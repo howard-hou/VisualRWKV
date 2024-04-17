@@ -345,6 +345,10 @@ class VisualRWKV(pl.LightningModule):
             self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        if args.image_scanning == 'spiral':
+            self.spiral_order = get_spiral_order(self.vit.config.image_size//self.vit.config.patch_size)
+        if args.image_scanning == 'snake':
+            self.snake_order = get_snake_order(self.vit.config.image_size//self.vit.config.patch_size)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -395,12 +399,14 @@ class VisualRWKV(pl.LightningModule):
             logits = self.unidirectional_forward(x, x_emb=image_features)
         if self.args.image_scanning == 'bidirection':
             logits = self.bidirectional_forward(x, x_emb=image_features)
-        if self.args.image_scanning == 'bidirection2':
-            logits = self.bidirectional_forward2(x, x_emb=image_features)
-        if self.args.image_scanning == 'bidirection3':
-            logits = self.bidirectional_forward3(x, x_emb=image_features)
         if self.args.image_scanning == 'multidirection':
             logits = self.multidirectional_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'rotation':
+            logits = self.rotational_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'spiral':
+            logits = self.spiral_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'snake':
+            logits = self.snake_forward(x, x_emb=image_features)
         return logits, targets
     
     def unidirectional_forward(self, x, x_emb=None):
@@ -414,9 +420,6 @@ class VisualRWKV(pl.LightningModule):
                 x = deepspeed.checkpointing.checkpoint(block, x)
             else:
                 x = block(x)
-            # skip connection
-            if x_emb is not None:
-                x[:, self.img_start:self.img_end+1, :] += x_emb
 
         x = self.rwkv.ln_out(x)
 
@@ -442,46 +445,6 @@ class VisualRWKV(pl.LightningModule):
             
             if do_reverse: # reverse back
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
-            # skip connection
-            if x_emb is not None:
-                x[:, self.img_start:self.img_end+1, :] += x_emb
-
-        x = self.rwkv.ln_out(x)
-
-        x = self.rwkv.head(x)
-
-        return x
-    
-    def bidirectional_forward2(self, x, x_emb=None):
-        args = self.args
-        x_rev = x.clone()
-        x_rev[:, self.img_start:self.img_end, :] = x_rev[:, self.img_start:self.img_end, :].flip(1)
-        # forward
-        logits = self.rwkv(x)
-        # backward
-        logits_rev = self.rwkv(x_rev)
-        return logits + logits_rev
-
-    def bidirectional_forward3(self, x, x_emb=None):
-        args = self.args
-
-        if args.dropout > 0:
-            x = self.rwkv.drop0(x)
-
-        for i, block in enumerate(self.rwkv.blocks):
-            x_rev = x.clone()
-            x_rev[:, self.img_start:self.img_end, :] = x_rev[:, self.img_start:self.img_end, :].flip(1)
-            if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-            # reverse
-            if args.grad_cp == 1:
-                x_rev = deepspeed.checkpointing.checkpoint(block, x_rev)
-            else:
-                x_rev = block(x_rev)
-            # update non-image part
-            x[:, self.img_end:, :] += x_rev[:, self.img_end:, :]
 
         x = self.rwkv.ln_out(x)
 
@@ -514,9 +477,70 @@ class VisualRWKV(pl.LightningModule):
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
             if do_transpose: # transpose back
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
-            # skip connection
-            if x_emb is not None:
-                x[:, self.img_start:self.img_end+1, :] += x_emb # with cls token
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def rotational_forward(self, x, x_emb=None):
+        args = self.args
+        x_emb = x_emb[:, :-1] # drop cls token
+        rotate_distance = (self.img_end - self.img_start) // 3
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for i, block in enumerate(self.rwkv.blocks):
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+            # rotate
+            #x[:, self.img_start:self.img_end, :] = rotate_tensor(x[:, self.img_start:self.img_end, :], rotate_distance)
+            x_emb = rotate_tensor(x_emb, rotate_distance)
+            x[:, self.img_start:self.img_end, :] = x_emb
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def spiral_forward(self, x, x_emb=None):
+        args = self.args
+        spiral_order = torch.LongTensor(self.spiral_order).to(x.device)
+        spiral_image_features = x_emb[:, :-1][:, spiral_order]
+        x[:, self.img_start:self.img_end, :] = spiral_image_features
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for block in self.rwkv.blocks:
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def snake_forward(self, x, x_emb=None):
+        args = self.args
+        snake_order = torch.LongTensor(self.snake_order).to(x.device)
+        snake_image_features = x_emb[:, :-1][:, snake_order]
+        x[:, self.img_start:self.img_end, :] = snake_image_features
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for block in self.rwkv.blocks:
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
 
         x = self.rwkv.ln_out(x)
 
@@ -687,3 +711,62 @@ class VisualRWKV(pl.LightningModule):
             x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
             x = x[:, -self.args.ctx_len:, :] # truncate
         return generated
+
+
+def rotate_tensor(tensor, distance):
+    """
+    Rotate a PyTorch tensor along the first dimension by a certain distance.
+
+    Args:
+    - tensor (torch.Tensor): Input tensor to be rotated.
+    - distance (int): The distance to rotate. A positive distance rotates
+                      the tensor to the right, and a negative distance
+                      rotates the tensor to the left.
+
+    Returns:
+    - rotated_tensor (torch.Tensor): Rotated tensor.
+    """
+    if distance == 0:
+        return tensor
+
+    length = tensor.size(0)
+    distance = distance % length  # Ensure distance is within the length of the tensor
+
+    if distance < 0:
+        distance = length + distance  # Convert negative distance to positive equivalent
+
+    # Split tensor into two parts and concatenate them after rotation
+    rotated_tensor = torch.cat((tensor[-distance:], tensor[:-distance]))
+
+    return rotated_tensor
+
+def get_spiral_order(n):
+    rows, cols = n, n
+    matrix = torch.arange(rows * cols).reshape(rows, cols).tolist()
+    order = list()
+    left, right, top, bottom = 0, cols - 1, 0, rows - 1
+    while left <= right and top <= bottom:
+        for column in range(left, right + 1):
+            order.append(matrix[top][column])
+        for row in range(top + 1, bottom + 1):
+            order.append(matrix[row][right])
+        if left < right and top < bottom:
+            for column in range(right - 1, left, -1):
+                order.append(matrix[bottom][column])
+            for row in range(bottom, top, -1):
+                order.append(matrix[row][left])
+        left, right, top, bottom = left + 1, right - 1, top + 1, bottom - 1
+    return order
+
+def get_snake_order(n):
+    rows, cols = n, n
+    matrix = torch.arange(rows * cols).reshape(rows, cols).tolist()
+    order = list()
+    for i in range(rows):
+        if i % 2 == 0:
+            for j in range(cols):
+                order.append(matrix[i][j])
+        else:
+            for j in range(cols - 1, -1, -1):
+                order.append(matrix[i][j])
+    return order
