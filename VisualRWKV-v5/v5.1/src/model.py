@@ -395,6 +395,10 @@ class VisualRWKV(pl.LightningModule):
             logits = self.unidirectional_forward(x, x_emb=image_features)
         if self.args.image_scanning == 'bidirection':
             logits = self.bidirectional_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'bidirection2':
+            logits = self.bidirectional_forward2(x, x_emb=image_features)
+        if self.args.image_scanning == 'bidirection3':
+            logits = self.bidirectional_forward3(x, x_emb=image_features)
         if self.args.image_scanning == 'multidirection':
             logits = self.multidirectional_forward(x, x_emb=image_features)
         return logits, targets
@@ -441,6 +445,43 @@ class VisualRWKV(pl.LightningModule):
             # skip connection
             if x_emb is not None:
                 x[:, self.img_start:self.img_end+1, :] += x_emb
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def bidirectional_forward2(self, x, x_emb=None):
+        args = self.args
+        x_rev = x.clone()
+        x_rev[:, self.img_start:self.img_end, :] = x_rev[:, self.img_start:self.img_end, :].flip(1)
+        # forward
+        logits = self.rwkv(x)
+        # backward
+        logits_rev = self.rwkv(x_rev)
+        return logits + logits_rev
+
+    def bidirectional_forward3(self, x, x_emb=None):
+        args = self.args
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for i, block in enumerate(self.rwkv.blocks):
+            x_rev = x.clone()
+            x_rev[:, self.img_start:self.img_end, :] = x_rev[:, self.img_start:self.img_end, :].flip(1)
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+            # reverse
+            if args.grad_cp == 1:
+                x_rev = deepspeed.checkpointing.checkpoint(block, x_rev)
+            else:
+                x_rev = block(x_rev)
+            # update non-image part
+            x[:, self.img_end:, :] += x_rev[:, self.img_end:, :]
 
         x = self.rwkv.ln_out(x)
 

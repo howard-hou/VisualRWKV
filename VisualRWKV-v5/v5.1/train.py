@@ -60,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
     parser.add_argument("--image_scanning", default='unidirection', type=str, 
-                        choices=['unidirection', 'bidirection', 'multidirection']) 
+                        choices=['unidirection', 'bidirection', 'multidirection', 'bidirection2']) 
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
