@@ -346,9 +346,14 @@ class VisualRWKV(pl.LightningModule):
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
         if args.image_scanning == 'spiral':
-            self.spiral_order = get_spiral_order(self.vit.config.image_size//self.vit.config.patch_size)
+            spiral_order = get_spiral_scan_order(self.vit.config.image_size//self.vit.config.patch_size)
+            self.register_buffer("spiral_order", torch.LongTensor(spiral_order))
         if args.image_scanning == 'snake':
-            self.snake_order = get_snake_order(self.vit.config.image_size//self.vit.config.patch_size)
+            snake_order = get_snake_scan_order(self.vit.config.image_size//self.vit.config.patch_size)
+            self.register_buffer("snake_order", torch.LongTensor(snake_order))
+        if args.image_scanning == 'zigzag':
+            zigzag_order = get_zigzag_scan_order(self.vit.config.image_size//self.vit.config.patch_size)
+            self.register_buffer("zigzag_order", torch.LongTensor(zigzag_order))
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -407,6 +412,8 @@ class VisualRWKV(pl.LightningModule):
             logits = self.spiral_forward(x, x_emb=image_features)
         if self.args.image_scanning == 'snake':
             logits = self.snake_forward(x, x_emb=image_features)
+        if self.args.image_scanning == 'zigzag':
+            logits = self.zigzag_forward(x, x_emb=image_features)
         return logits, targets
     
     def unidirectional_forward(self, x, x_emb=None):
@@ -486,7 +493,7 @@ class VisualRWKV(pl.LightningModule):
     
     def rotational_forward(self, x, x_emb=None):
         args = self.args
-        x_emb = x_emb[:, :-1] # drop cls token
+
         rotate_distance = (self.img_end - self.img_start) // 3
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
@@ -497,9 +504,8 @@ class VisualRWKV(pl.LightningModule):
             else:
                 x = block(x)
             # rotate
-            #x[:, self.img_start:self.img_end, :] = rotate_tensor(x[:, self.img_start:self.img_end, :], rotate_distance)
-            x_emb = rotate_tensor(x_emb, rotate_distance)
-            x[:, self.img_start:self.img_end, :] = x_emb
+            x[:, self.img_start:self.img_end, :] = rotate_tensor(x[:, self.img_start:self.img_end, :], rotate_distance)
+
         x = self.rwkv.ln_out(x)
 
         x = self.rwkv.head(x)
@@ -508,8 +514,7 @@ class VisualRWKV(pl.LightningModule):
     
     def spiral_forward(self, x, x_emb=None):
         args = self.args
-        spiral_order = torch.LongTensor(self.spiral_order).to(x.device)
-        spiral_image_features = x_emb[:, :-1][:, spiral_order]
+        spiral_image_features = x_emb[:, :-1][:, self.spiral_order]
         x[:, self.img_start:self.img_end, :] = spiral_image_features
 
         if args.dropout > 0:
@@ -529,9 +534,28 @@ class VisualRWKV(pl.LightningModule):
     
     def snake_forward(self, x, x_emb=None):
         args = self.args
-        snake_order = torch.LongTensor(self.snake_order).to(x.device)
-        snake_image_features = x_emb[:, :-1][:, snake_order]
+        snake_image_features = x_emb[:, :-1][:, self.snake_order]
         x[:, self.img_start:self.img_end, :] = snake_image_features
+
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for block in self.rwkv.blocks:
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+
+        x = self.rwkv.ln_out(x)
+
+        x = self.rwkv.head(x)
+
+        return x
+    
+    def zigzag_forward(self, x, x_emb=None):
+        args = self.args
+        zigzag_image_features = x_emb[:, :-1][:, self.zigzag_order]
+        x[:, self.img_start:self.img_end, :] = zigzag_image_features
 
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
@@ -740,7 +764,7 @@ def rotate_tensor(tensor, distance):
 
     return rotated_tensor
 
-def get_spiral_order(n):
+def get_spiral_scan_order(n):
     rows, cols = n, n
     matrix = torch.arange(rows * cols).reshape(rows, cols).tolist()
     order = list()
@@ -758,7 +782,7 @@ def get_spiral_order(n):
         left, right, top, bottom = left + 1, right - 1, top + 1, bottom - 1
     return order
 
-def get_snake_order(n):
+def get_snake_scan_order(n):
     rows, cols = n, n
     matrix = torch.arange(rows * cols).reshape(rows, cols).tolist()
     order = list()
@@ -769,4 +793,52 @@ def get_snake_order(n):
         else:
             for j in range(cols - 1, -1, -1):
                 order.append(matrix[i][j])
+    return order
+
+def get_zigzag_scan_order(n):
+    """
+    Perform zigzag scanning on a 2D matrix.
+
+    Args:
+    - matrix (list of lists): Input 2D matrix to be scanned.
+
+    Returns:
+    - result (list): List containing elements scanned in zigzag order.
+    """
+    rows, cols = n, n
+    matrix = torch.arange(rows * cols).reshape(rows, cols).tolist()
+    order = []
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    # Flag to indicate whether scanning upwards or downwards
+    going_up = True
+
+    for i in range(rows + cols - 1):
+        if going_up:
+            # If scanning upwards, start from the first row or the last column
+            if i < rows:
+                row, col = i, 0
+            else:
+                row, col = rows - 1, i - (rows - 1)
+            # Move diagonally upwards until reaching the first row or the last column
+            while row >= 0 and col < cols:
+                order.append(matrix[row][col])
+                row -= 1
+                col += 1
+        else:
+            # If scanning downwards, start from the last row or the first column
+            if i < cols:
+                row, col = 0, i
+            else:
+                row, col = i - (cols - 1), cols - 1
+            # Move diagonally downwards until reaching the last row or the first column
+            while row < rows and col >= 0:
+                order.append(matrix[row][col])
+                row += 1
+                col -= 1
+
+        # Change direction for the next diagonal scan
+        going_up = not going_up
+
     return order
