@@ -164,9 +164,9 @@ class MyDataset(Dataset):
         sample_idx = (step * step * step) % self.magic_prime
         # first epoch use the original data, then use the reversed data(avoid overfitting)
         # normally, we don't train for more than 2 epoch
-        if step < self.magic_prime:
+        if step < self.magic_prime: # first epoch
             sample = self.list_data_dict[sample_idx]
-        else:
+        else: # when step >= self.magic_prime, means the second epoch
             sample = self.list_data_dict_reverse[sample_idx]
 
         if 'image' in sample:
