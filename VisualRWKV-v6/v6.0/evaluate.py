@@ -231,6 +231,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
+    os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
