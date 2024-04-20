@@ -10,3 +10,4 @@ RUN pip3 install --no-cache-dir --progress-bar off deepspeed==0.12.6 -i https://
 RUN pip3 install --no-cache-dir --progress-bar off wandb ninja -i https://pypi.tuna.tsinghua.edu.cn/simple
 RUN pip3 install --no-cache-dir --progress-bar off transformers -i https://pypi.tuna.tsinghua.edu.cn/simple
 RUN pip3 install --no-cache-dir --progress-bar off datasets -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip3 install --no-cache-dir --progress-bar off timm -i https://pypi.tuna.tsinghua.edu.cn/simple
