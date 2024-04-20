@@ -428,7 +428,7 @@ class VisualRWKV(pl.LightningModule):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         # calculate valid length for each sample
-        real_valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
+        real_valid_lengths = (shift_labels != IGNORE_INDEX).sum(1).float() # [B, T] -> [B]
         # 50% EMA, 50% current
         mixing_valid_lengths = (real_valid_lengths + self.ema_length) / 2
         # calculate loss

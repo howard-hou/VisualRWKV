@@ -202,7 +202,7 @@ if __name__ == "__main__":
             shape = [i for i in shape if i != 1]
             if len(shape) > 1:
                 print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {n}")
-            else:
+            if len(shape) == 1:
                 print(f"{str(shape[0]).ljust(5)}       {n}")
 
     if "deepspeed" in args.strategy:
