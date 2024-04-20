@@ -424,8 +424,16 @@ class VisualRWKV(pl.LightningModule):
         logits, targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
+        # calculate valid length for each sample
+        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
+
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
-                               shift_labels.view(-1))
+                               shift_labels.view(-1),
+                               ignore_index=IGNORE_INDEX,
+                               reduction='none')
+        # Average the loss by valid label length
+        loss = loss.view(shift_labels.size()).sum(1) / valid_lengths # [B*T] -> [B, T] -> [B]
+        loss = loss.mean() # average over batch
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):
