@@ -346,6 +346,9 @@ class VisualRWKV(pl.LightningModule):
             self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        # exponential moving average for valid label length
+        self.register_buffer("ema_length", torch.tensor(0.0))
+        self.ema_beta = 0.99
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -425,15 +428,19 @@ class VisualRWKV(pl.LightningModule):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         # calculate valid length for each sample
-        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
-
+        real_valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
+        # 50% EMA, 50% current
+        mixing_valid_lengths = (real_valid_lengths + self.ema_length) / 2
+        # calculate loss
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
                                shift_labels.view(-1),
                                ignore_index=IGNORE_INDEX,
                                reduction='none')
         # Average the loss by valid label length
-        loss = loss.view(shift_labels.size()).sum(1) / valid_lengths # [B*T] -> [B, T] -> [B]
+        loss = loss.view(shift_labels.size()).sum(1) / mixing_valid_lengths # [B*T] -> [B, T] -> [B]
         loss = loss.mean() # average over batch
+        # update EMA
+        self.ema_length = self.ema_beta * self.ema_length + (1 - self.ema_beta) * real_valid_lengths.mean()
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):
