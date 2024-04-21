@@ -11,7 +11,7 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from transformers import CLIPVisionModel
+from transformers import SiglipVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
@@ -339,7 +339,7 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
+        self.vit = SiglipVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
@@ -445,28 +445,7 @@ class VisualRWKV(pl.LightningModule):
         L, D = image_features.shape[1], image_features.shape[2]
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)[:, 0, :, :]
-        image_features = self.grid_pooling(image_features)
         return self.proj(image_features)
-    
-    def grid_pooling(self, image_features):
-        if self.args.grid_size == -1: # no grid pooling
-            return image_features
-        if self.args.grid_size == 0: # take cls token
-            return image_features[:, 0:1, :]
-        if self.args.grid_size == 1: # global avg pooling
-            return image_features.mean(dim=1, keepdim=True)
-        cls_features = image_features[:, 0:1, :]
-        image_features = image_features[:, 1:, :] #drop cls token
-        B, L, D = image_features.shape
-        H_or_W = int(L**0.5)
-        image_features = image_features.view(B, H_or_W, H_or_W, D)
-        grid_stride = H_or_W // self.args.grid_size
-        image_features = F.avg_pool2d(image_features.permute(0, 3, 1, 2), 
-                                      padding=0,
-                                      kernel_size=grid_stride, 
-                                      stride=grid_stride)
-        image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
-        return torch.cat((cls_features, image_features), dim=1)
 
     def get_max_image_token_indice(self, samples):
         max_image_token_indice = 0
@@ -502,7 +481,7 @@ class VisualRWKV(pl.LightningModule):
         new_labels = []
         max_image_token_indice = self.get_max_image_token_indice(samples)
         self.img_start = max_image_token_indice
-        self.img_end = max_image_token_indice + (image_features.shape[1] - 1) # exclude cls token
+        self.img_end = max_image_token_indice + image_features.shape[1]
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             cur_labels = samples["labels"][idx]
             cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)
