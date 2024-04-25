@@ -388,6 +388,9 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
+        # unidiction
+        # logits = self.rwkv(x)
+        # bidirectional
         logits = self.bidirectional_forward(x)
         return logits, targets
 
