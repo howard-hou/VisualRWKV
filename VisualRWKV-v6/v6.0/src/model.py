@@ -449,14 +449,14 @@ class VisualRWKV(pl.LightningModule):
         return self.proj(image_features)
     
     def grid_pooling(self, image_features):
-        if self.args.grid_size == -1: # no grid pooling
-            return image_features
-        if self.args.grid_size == 0: # take cls token
-            return image_features[:, 0:1, :]
-        if self.args.grid_size == 1: # global avg pooling
-            return image_features.mean(dim=1, keepdim=True)
         cls_features = image_features[:, 0:1, :]
         image_features = image_features[:, 1:, :] #drop cls token
+        if self.args.grid_size == -1: # no grid pooling
+            return torch.cat((image_features, cls_features), dim=1)
+        if self.args.grid_size == 0: # take cls token
+            return cls_features
+        if self.args.grid_size == 1: # global avg pooling
+            return torch.cat((image_features.mean(dim=1, keepdim=True), cls_features), dim=1)
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D)
@@ -466,7 +466,7 @@ class VisualRWKV(pl.LightningModule):
                                       kernel_size=grid_stride, 
                                       stride=grid_stride)
         image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
-        return torch.cat((cls_features, image_features), dim=1)
+        return torch.cat((image_features, cls_features), dim=1)
 
     def get_max_image_token_indice(self, samples):
         max_image_token_indice = 0

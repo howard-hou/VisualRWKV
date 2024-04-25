@@ -445,6 +445,9 @@ class VisualRWKV(pl.LightningModule):
         L, D = image_features.shape[1], image_features.shape[2]
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)[:, 0, :, :]
+        # append mean token
+        mean_token = image_features.mean(1, keepdim=True)
+        image_features = torch.cat((image_features,mean_token), dim=1)
         return self.proj(image_features)
 
     def get_max_image_token_indice(self, samples):
@@ -475,13 +478,13 @@ class VisualRWKV(pl.LightningModule):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
         emb_dtype = samples["images"].dtype
         ### prepare image features
-        image_features  = self.encode_images(samples["images"]) # with cls token
+        image_features  = self.encode_images(samples["images"]) 
         ### prepare input token
         new_input_embeds = []
         new_labels = []
         max_image_token_indice = self.get_max_image_token_indice(samples)
         self.img_start = max_image_token_indice
-        self.img_end = max_image_token_indice + image_features.shape[1]
+        self.img_end = max_image_token_indice + (image_features.shape[1] - 1) # exclude mean token
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             cur_labels = samples["labels"][idx]
             cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)

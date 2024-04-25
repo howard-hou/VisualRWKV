@@ -13,7 +13,7 @@ from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop, load_image_from_base64
-from transformers import CLIPImageProcessor
+from transformers import AutoImageProcessor
 
 
 def split_list(lst, n):
@@ -110,6 +110,7 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             image = Image.open(image_folder / image_file)
         else: # image is base64 encoded
             image = load_image_from_base64(image_file)
+        image = image.convert('RGB')
         if args.detail == 'high':
             image = [image] + gpt4v_crop(image)
             image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
@@ -118,11 +119,11 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
     else:
         # image does not exist in the data, fill with zeros
         if detail == 'high':
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
+            size = image_processor.size
+            image_tensor = torch.zeros(7, 3, size['height'], size['width'])
         else:
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+            size = image_processor.size
+            image_tensor = torch.zeros(1, 3, size['height'], size['width'])
     return image_tensor
 
 def eval_model(args):
@@ -135,7 +136,7 @@ def eval_model(args):
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_name)
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
