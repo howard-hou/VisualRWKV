@@ -1,5 +1,5 @@
 from src.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import process_image_tokens_in_conversations, _add_speaker_and_signal, tokenize_with_image_token
+from src.dataset import preprocess, IGNORE_INDEX
 import argparse
 import json
 from tqdm import tqdm
@@ -15,17 +15,19 @@ if __name__ == "__main__":
     args = parse_args()
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     data_list = json.load(open(args.data_file))
-    ctx_lens = []
+    ctx_lens, valid_label_lens = [], []
     for data in tqdm(data_list):
-        conversations = data["conversations"]
-        conversations = process_image_tokens_in_conversations(conversations)
-        conversations = _add_speaker_and_signal(conversations)
-        conversation = "".join([sentence["value"] for sentence in conversations])
-        if "image" in data:
-            input_ids = tokenize_with_image_token(conversation, tokenizer)
-        else:
-            input_ids = tokenizer.encode(conversation)
-        ctx_lens.append(len(input_ids))
+        data_dict = preprocess(
+            data["conversations"],
+            tokenizer,
+            has_image=('image' in data),
+            ctx_len=None,
+            pad_token_id=0,
+            do_pad_to_max_length=False)
+        
+        ctx_lens.append(len(data_dict["input_ids"]))
+        valid_label_lens.append(sum(data_dict["labels"] != IGNORE_INDEX))
+
     print("max ctx len", max(ctx_lens))
     print("min ctx len", min(ctx_lens))
     print("avg ctx len", sum(ctx_lens) / len(ctx_lens))
