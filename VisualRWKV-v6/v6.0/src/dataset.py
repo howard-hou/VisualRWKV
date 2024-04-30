@@ -20,6 +20,23 @@ STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
 
 
+def get_all_human_conversation(conversations: Sequence[Dict]) -> str:
+    """
+    Get all human conversation from a list of conversations.
+    """
+    human_conv_list = []
+    for sentence in conversations:
+        if sentence["from"].lower() == "human":
+            if DEFAULT_IMAGE_TOKEN in sentence['value']:
+                human_conv = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
+                human_conv = human_conv.replace("Answer the question using a single word or phrase.", '').strip()
+                human_conv = re.sub(r"\n(\s*\n)+", '\n', human_conv)
+                human_conv_list.append(human_conv)
+            else:
+                human_conv_list.append(sentence['value'].strip())
+    return "\n".join(human_conv_list)
+
+
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
     image_position: str = "first", # "first", "middle" or "last"
@@ -29,6 +46,8 @@ def process_image_tokens_in_conversations(
     image first, then text
     replace \n\n with \n
     """
+    if image_position == 'middle':
+        all_human_conv = get_all_human_conversation(conversations)
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
@@ -36,7 +55,7 @@ def process_image_tokens_in_conversations(
             if image_position == "first":
                 sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
             elif image_position == "middle":
-                sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+                sentence['value'] = all_human_conv + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
             elif image_position == "last":
                 sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
             else:
