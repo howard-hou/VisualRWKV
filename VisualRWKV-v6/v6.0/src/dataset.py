@@ -109,11 +109,17 @@ def tokenize_with_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_I
     return input_ids[:-1] # remove last image token
 
 
-def mask_targets_from_human(targets, tokenized_lens, speakers):
+def mask_targets(targets, tokenized_lens, speakers):
+    '''
+    1. mask human words with IGNORE_INDEX.
+    2. mask assistant begin signal with IGNORE_INDEX. Assistant: -> [5585, 41693, 59] 3 tokens
+    '''
     cur_idx = 0
     for tokenized_len, speaker in zip(tokenized_lens, speakers):
         if speaker == "human":
             targets[cur_idx:cur_idx + tokenized_len] = IGNORE_INDEX
+        if speaker == "gpt":
+            targets[cur_idx:cur_idx + 3] = IGNORE_INDEX
         cur_idx += tokenized_len
 
 
@@ -145,14 +151,15 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_
     input_ids, tokenized_lens, speakers = [], [], []
     for conversation in conversations:
         if has_image:
-            input_ids.extend(tokenize_with_image_token(conversation["value"], tokenizer))
+            conv_ids = tokenize_with_image_token(conversation["value"], tokenizer)
         else:
-            input_ids.extend(tokenizer.encode(conversation["value"]))
-        tokenized_lens.append(len(input_ids))
+            conv_ids = tokenizer.encode(conversation["value"])
+        input_ids.extend(conv_ids)
+        tokenized_lens.append(len(conv_ids))
         speakers.append(conversation["from"])
     input_ids = torch.tensor(input_ids, dtype=torch.long)
     targets = copy.deepcopy(input_ids)
-    mask_targets_from_human(targets, tokenized_lens, speakers)
+    mask_targets(targets, tokenized_lens, speakers)
     if do_pad_to_max_length:
         input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
     return dict(input_ids=input_ids, labels=targets, input_text=input_text)
