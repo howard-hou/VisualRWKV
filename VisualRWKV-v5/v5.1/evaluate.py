@@ -19,7 +19,7 @@ from transformers import CLIPImageProcessor
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
     chunk_size = math.ceil(len(lst) / n)  # integer division
-    return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+    return [lst[i: i+chunk_size] for i in range(0, len(lst), chunk_size)]
 
 
 def get_chunk(lst, n, k):
@@ -44,7 +44,7 @@ def load_questions(file_path):
     if suffix == ".jsonl":
         questions = [json.loads(q) for q in open(file_path)]
     elif suffix == ".json":
-        questions = json.load(open(file_path))
+        questions = json.load(open(file_path))['questions']
     elif suffix == ".tsv":
         questions = pd.read_table(file_path).to_dict("records")
     else:
@@ -100,9 +100,12 @@ def get_input_text(line, dataset_name):
             return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
         elif "conversations" in line:
             return line["conversations"][0]["value"]
+        elif 'question' in line:
+            return DEFAULT_IMAGE_TOKEN + '\n' + line['question']
         else:
             raise ValueError("Cannot find input text in line: {}".format(line))
-    
+
+
 def get_input_image_tensor(line, image_folder, image_processor, detail):
     if "image" in line:
         image_file = line["image"]
@@ -110,6 +113,14 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             image = Image.open(image_folder / image_file)
         else: # image is base64 encoded
             image = load_image_from_base64(image_file)
+        if args.detail == 'high':
+            image = [image] + gpt4v_crop(image)
+            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
+        else:
+            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+    elif 'image_id' in line:
+        image_id = line['image_id']
+        image = Image.open(image_folder / ('COCO_test2015_' + str(image_id).zfill(12) + '.jpg'))
         if args.detail == 'high':
             image = [image] + gpt4v_crop(image)
             image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
@@ -124,6 +135,7 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             crop_size = image_processor.crop_size
             image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
     return image_tensor
+
 
 def eval_model(args):
     from src.model import VisualRWKV
@@ -144,9 +156,9 @@ def eval_model(args):
     image_folder = Path(args.image_folder) if args.image_folder is not None else None
 
     out_file = open(output_file, "w")
-    pbar = tqdm(total=len(questions))
-    update_every = len(questions) // 100
-    for i, line in enumerate(questions):
+    pbar = tqdm(questions)
+    #update_every = len(questions) // 100
+    for i, line in enumerate(pbar):
         idx = get_question_id(line)
         input_text = get_input_text(line, dataset_name=args.dataset_name)
 
@@ -191,11 +203,12 @@ def eval_model(args):
                               }}, ensure_ascii=False)
         out_file.write(out_str + "\n")
         # update progress bar
-        if i % update_every == 0 and i != 0:
-            pbar.update(update_every)
+        #if i % update_every == 0 and i != 0:
+        #   pbar.update(update_every)
         out_file.flush()
     out_file.close()
-    pbar.close()
+    #pbar.close()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
