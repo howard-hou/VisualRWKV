@@ -4,6 +4,8 @@
 import json
 import argparse
 import copy
+import random
+random.seed(22)
 
 def clean_missing_data(data_list):
     new_data_list = []
@@ -67,6 +69,8 @@ if __name__ == "__main__":
     data_list = split_large_multi_round_conversations(data_list,
                                                       max_rounds=args.max_rounds)
     print("reformatted data size:", len(data_list))
+    random.shuffle(data_list)
+    print("reformatted data size after shuffle:", len(data_list))
     json.dump(data_list, 
               open(args.data_file.replace(".json", "_reformatted.json"), "w"),
               indent=2, ensure_ascii=False)
