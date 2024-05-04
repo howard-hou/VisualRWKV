@@ -424,8 +424,10 @@ class VisualRWKV(pl.LightningModule):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         # calculate valid length for each sample
-        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1).float() # [B, T] -> [B]
-        # calculate loss
+        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
+        # if valid length is 0, set it to 1, to avoid division by zero
+        valid_lengths = torch.max(valid_lengths, torch.ones_like(valid_lengths))
+        # calculate loss， loss of IGNORE_INDEX will be set to 0
         loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
                                shift_labels.view(-1),
                                ignore_index=IGNORE_INDEX,
