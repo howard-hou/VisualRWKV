@@ -6,8 +6,8 @@ cd "$(dirname "$(dirname "$0")")/.."
 # 打印当前工作目录
 echo "Current working directory: $(pwd)"
 
-python train.py --load_model /houhaowenT/huggingface_models/BlinkDL/rwkv-6-world/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth \
-    --wandb "" --proj_dir out/rwkv3b-v060_pretrain \
+python train.py --load_model /houhaowenT/huggingface_models/BlinkDL/rwkv-6-world/RWKV-x060-World-7B-v2.1-20240507-ctx4096.pth \
+    --wandb "" --proj_dir out/rwkv7b-v060_pretrain \
     --data_file /houhaowenT/huggingface_datasets/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json \
     --data_type "json" --vocab_size 65536 \
     --ctx_len 1024 --epoch_steps 1000 --epoch_count 18 --epoch_begin 0 --epoch_save 0 \
@@ -16,5 +16,5 @@ python train.py --load_model /houhaowenT/huggingface_models/BlinkDL/rwkv-6-world
     --accelerator gpu --devices 4 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
     --image_folder /houhaowenT/huggingface_datasets/LLaVA-Pretrain/images/ \
     --vision_tower_name /houhaowenT/huggingface_models/openai/clip-vit-large-patch14-336 \
-    --freeze_rwkv 32 --detail low --grid_size -1 --image_position first \
+    --freeze_rwkv 32 --freeze_proj 0 --detail low --grid_size -1 --image_position first \
     --enable_progress_bar True
