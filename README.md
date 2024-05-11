@@ -37,14 +37,8 @@ If you want to pretrain by yourself. You can download the RWKV checkpoints from 
 #### Pre-training command
 You can refer to the following command to pretrain the VisualRWKV-v6.0 model. Also see scripts in the `scripts/train` directory.
 ```bash
+# here is an example to use 4 GPUs to pretrain a 1B5 RWKV model
 export CUDA_VISIBLE_DEVICES=0,1,2,3
-
-# 切换到脚本所在目录的上两级目录
-cd "$(dirname "$(dirname "$0")")/.."
-
-# 打印当前工作目录
-echo "Current working directory: $(pwd)"
-
 python train.py --load_model /path/to/rwkv/checkpoint \
     --wandb "" --proj_dir path/to/output/ \
     --data_file /path/to/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json \
@@ -60,3 +54,24 @@ python train.py --load_model /path/to/rwkv/checkpoint \
 ```
 
 ### Visual Instruction Tuning
+#### Prepare data
+Please refer to the [LLaVA](https://github.com/haotian-liu/LLaVA/blob/main/README.md) project for visual instruction data.
+
+#### Fine-tuning command
+You can refer to the following command to fine-tune the VisualRWKV-v6.0 model. Also see scripts in the `scripts/train` directory.
+```bash
+# here is an example to use 8 GPUs to fine-tune a 1B5 RWKV model
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+python train.py --model_path path/to/pretrained-visualrwkv \
+    --wandb "" --proj_dir out/rwkv1b5-v060_mix665k \
+    --data_file /path/to/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k.json \
+    --data_type "json" --vocab_size 65536 \
+    --ctx_len 2048 --epoch_steps 1000 --epoch_count 20 --epoch_begin 0 --epoch_save 5 \
+    --micro_bsz 8 --accumulate_grad_batches 2 --n_layer 24 --n_embd 2048 --pre_ffn 0 \
+    --lr_init 2e-5 --lr_final 2e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
+    --accelerator gpu --devices 8 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
+    --image_folder /path/to/LLaVA-Instruct-150K/images/ \
+    --vision_tower_name /path/to/openai/clip-vit-large-patch14-336 \
+    --freeze_rwkv 0 --freeze_proj 0 --detail low --grid_size -1 --image_position middle \
+    --enable_progress_bar True
+```
