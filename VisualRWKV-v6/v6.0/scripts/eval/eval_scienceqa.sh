@@ -8,7 +8,9 @@ vision_tower_path=$7
 image_position=$8
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
-
+# get the name of the model without extension
+model_name=$(basename "${model_path}")
+model_name="${model_name%.*}"
 # 切换到脚本所在目录的上两级目录
 cd "$(dirname "$(dirname "$0")")/.."
 
@@ -17,8 +19,8 @@ echo "Current working directory: $(pwd)"
 
 # 使用basename命令获取父目录名称
 exp_name=$(basename "${parent_dir}")
-# add ctx_len, grid_size, image_position to exp_name
-exp_name="${exp_name}_ctx${ctx_len}_grid${grid_size}_pos${image_position}"
+# add model name to exp name
+exp_name="${exp_name}_${model_name}"
 echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"
