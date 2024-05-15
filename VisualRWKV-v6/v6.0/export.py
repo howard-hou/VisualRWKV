@@ -11,7 +11,7 @@ args = parser.parse_args()
 output_dir = Path(args.output_dir)
 output_dir.mkdir(parents=True, exist_ok=True)
 model_name = Path(args.model_path).parent.name
-state_dict = torch.load(args.model_path)
+state_dict = torch.load(args.model_path, map_location="cpu")
 # print(state_dict.keys())
 rwkv_state_dict = {}
 visual_state_dict = {}

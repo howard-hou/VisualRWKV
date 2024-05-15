@@ -2,6 +2,6 @@ torch
 transformers
 ninja
 tokenizers
-rwkv==0.8.22
+rwkv==0.8.26
 pynvml
 huggingface_hub

@@ -79,16 +79,16 @@ class train_callback(pl.Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         args = self.args
-        token_per_step = args.ctx_len * args.real_bsz
+        sample_per_step = args.real_bsz
         real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
         if trainer.is_global_zero:  # logging
             t_now = time.time_ns()
-            kt_s = 0
+            sample_per_second = 0
             try:
                 t_cost = (t_now - trainer.my_time_ns) / 1e9
-                kt_s = token_per_step / t_cost / 1000
+                sample_per_second = sample_per_step / t_cost 
                 self.log("REAL it/s", 1.0 / t_cost, prog_bar=True, on_step=True)
-                self.log("Kt/s", kt_s, prog_bar=True, on_step=True)
+                self.log("sample/s", sample_per_second, prog_bar=True, on_step=True)
             except:
                 pass
             trainer.my_time_ns = t_now
@@ -104,9 +104,9 @@ class train_callback(pl.Callback):
             # self.log("s", real_step, prog_bar=True, on_step=True)
 
             if len(args.wandb) > 0:
-                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "wd": trainer.my_wd, "Gtokens": real_step * token_per_step / 1e9}
-                if kt_s > 0:
-                    lll["kt/s"] = kt_s
+                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "wd": trainer.my_wd, "Ksamples": real_step * sample_per_step / 1e3}
+                if sample_per_second > 0:
+                    lll["sample/s"] = sample_per_second
                 trainer.my_wandb.log(lll, step=int(real_step))
                 
 
