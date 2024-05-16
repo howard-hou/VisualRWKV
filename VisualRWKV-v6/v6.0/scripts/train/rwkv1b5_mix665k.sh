@@ -10,7 +10,7 @@ echo "Current working directory: $(pwd)"
 
 python train.py --model_path out/rwkv1b5-v060_pretrain/rwkv-8.pth \
     --wandb "rwkv1b5-v060_mix665k" --proj_dir out/rwkv1b5-v060_mix665k \
-    --data_file /houhaowenT/huggingface_datasets/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k.json \
+    --data_file /houhaowenT/huggingface_datasets/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k_reformatted.json \
     --data_type "json" --vocab_size 65536 \
     --ctx_len 2048 --epoch_steps 1000 --epoch_count 1 --epoch_begin 0 --epoch_save 5 \
     --micro_bsz 8 --accumulate_grad_batches 2 --n_layer 24 --n_embd 2048 --pre_ffn 0 \

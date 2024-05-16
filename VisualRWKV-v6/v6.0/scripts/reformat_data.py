@@ -39,6 +39,8 @@ def split_large_multi_round_conversations(data_list, max_rounds=10):
                 conv_human, conv_gpt = conv_pairs[i]
                 if '<image>' not in conv_human["value"]:
                     conv_human["value"] = "<image>\n" + conv_human["value"]
+                if i != 0 and "Answer the question using a single word or phrase." in data["conversations"][0]["value"]:
+                    conv_human["value"] += "\nAnswer the question using a single word or phrase."
                 new_conversations.append(conv_human)
                 new_conversations.append(conv_gpt)
                 # add the rest rounds
@@ -56,7 +58,8 @@ def split_large_multi_round_conversations(data_list, max_rounds=10):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("data_file", type=str)
-    parser.add_argument("--max_rounds", type=int, default=10)
+    parser.add_argument("--max_rounds", type=int, default=20)
+    parser.add_argument("--shuffle", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -69,8 +72,9 @@ if __name__ == "__main__":
     data_list = split_large_multi_round_conversations(data_list,
                                                       max_rounds=args.max_rounds)
     print("reformatted data size:", len(data_list))
-    random.shuffle(data_list)
-    print("reformatted data size after shuffle:", len(data_list))
+    if args.shuffle:
+        random.shuffle(data_list)
+        print("reformatted data size after shuffle:", len(data_list))
     json.dump(data_list, 
               open(args.data_file.replace(".json", "_reformatted.json"), "w"),
               indent=2, ensure_ascii=False)
