@@ -18,8 +18,6 @@ class train_callback(pl.Callback):
 
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         args = self.args
-        # if args.cuda_cleanup > 0:
-        #     torch.cuda.empty_cache()
         # global_step is update step, influence by gradient accumulation
         real_step = trainer.global_step * args.accumulate_grad_batches + args.epoch_begin * args.epoch_steps
 
@@ -80,7 +78,8 @@ class train_callback(pl.Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         args = self.args
         sample_per_step = args.real_bsz
-        real_step = trainer.global_step + args.epoch_begin * args.epoch_steps
+        # micro_step is the step of real batch
+        real_step = self.micro_step + args.epoch_begin * args.epoch_steps
         if trainer.is_global_zero:  # logging
             t_now = time.time_ns()
             sample_per_second = 0
