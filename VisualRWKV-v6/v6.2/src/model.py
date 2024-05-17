@@ -365,6 +365,8 @@ class VisualRWKV(pl.LightningModule):
             self.rwkv.emb.requires_grad_(True)
         else:
             self.rwkv.emb.requires_grad_(False)
+
+    def enable_state_tuning(self):
         # fine-tune time state all the time
         for block in self.rwkv.blocks:
             block.att.time_state.requires_grad_(True)

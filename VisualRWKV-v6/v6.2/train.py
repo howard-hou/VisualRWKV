@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
+    parser.add_argument("--enable_state_tuning", default=0, type=int)  # state tuning
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
 
     parser = Trainer.add_argparse_args(parser)
@@ -192,6 +193,8 @@ if __name__ == "__main__":
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
+    if args.enable_state_tuning > 0:
+        model.enable_state_tuning()
 
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
