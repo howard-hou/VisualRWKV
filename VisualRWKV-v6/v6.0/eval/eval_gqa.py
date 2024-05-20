@@ -480,5 +480,7 @@ if badcases:
         print("   Predicted Answer: {}".format(bc["predictedAnswer"]))
         print("   Question ID: {}".format(bc["questionId"]))
         print("")
+        if i > 10:
+            break
 else:
     print("\nNo bad cases found.")
