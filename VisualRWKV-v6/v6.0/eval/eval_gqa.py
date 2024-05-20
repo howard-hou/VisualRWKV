@@ -341,7 +341,9 @@ def chiSquare(goldDist, predictedDist):
 
 ##### Main score computation 
 ##########################################################################################
-
+# Initialize data structure to track bad cases
+badcases = []
+badcase_index = 0
 # Loop over the questions and compute mterics
 for qid, question in tqdm(questions.items()):
     gold = question["answer"]
@@ -352,6 +354,19 @@ for qid, question in tqdm(questions.items()):
 
     wordsNum = getWordsNum(question)
     stepsNum = getStepsNum(question)
+
+    # Check for bad case (incorrect prediction)
+    if not correct:
+        # Store the bad case with question details
+        badcase = {
+            "badcaseIndex": badcase_index,
+            "questionId": qid,
+            "questionText": question["question"],
+            "goldAnswer": gold,
+            "predictedAnswer": predicted
+        }
+        badcases.append(badcase)
+        badcase_index += 1
     
     # Compute scores over the balanced dataset (more robust against cheating by making educated guesses)
     if question["isBalanced"]:
@@ -453,3 +468,17 @@ for m, mPrintName in detailedMetrics:
         # print score
         print("  {title}: {score:.2f}{suffix} ({amount} questions)".format(title = tName, 
             score = scores[m][t][0], suffix = "%", amount = scores[m][t][1]))    
+        
+# After all questions have been processed, print the bad cases
+if badcases:
+    # output to the same dir of the predictions file
+    json.dump(badcases, open(args.predictions.replace(".json", "_badcases.json"), "w"), indent = 2)
+    print(f"\nBad Cases (Incorrect Predictions): {len(badcases)}\n")
+    for i, bc in enumerate(badcases):
+        print("{}) Question: {}".format(i + 1, bc["questionText"]))
+        print("   Gold Answer: {}".format(bc["goldAnswer"]))
+        print("   Predicted Answer: {}".format(bc["predictedAnswer"]))
+        print("   Question ID: {}".format(bc["questionId"]))
+        print("")
+else:
+    print("\nNo bad cases found.")
