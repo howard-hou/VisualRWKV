@@ -34,6 +34,7 @@ def parse_args():
     parser.add_argument("--image_position", type=str, default="first")
     parser.add_argument("--image_tokens", type=int, default=None)
     parser.add_argument("--max_ctx_len", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--debug_mode", action="store_true")
     args = parser.parse_args()
     return args
@@ -117,3 +118,16 @@ if __name__ == "__main__":
     print("90% num rounds", sorted(num_conv_rounds)[int(len(num_conv_rounds) * 0.90)])
     print("95% num rounds", sorted(num_conv_rounds)[int(len(num_conv_rounds) * 0.95)])
     print("99% num rounds", sorted(num_conv_rounds)[int(len(num_conv_rounds) * 0.99)])
+    #
+    if args.batch_size is not None:
+        # convert to batch 
+        batch_valid_label_lens = [valid_label_lens[i:i+args.batch_size] for i in range(0, len(valid_label_lens), args.batch_size)]
+        print(batch_valid_label_lens[:10])
+        # sum over batch
+        batch_valid_label_lens = [sum(batch) for batch in batch_valid_label_lens]
+        print(f"batch size: {args.batch_size}")
+        print("max batch valid label", max(batch_valid_label_lens))
+        print("min batch valid label len", min(batch_valid_label_lens))
+        print("avg batch valid label len", round(sum(batch_valid_label_lens) / len(batch_valid_label_lens), 3))
+        print("std batch valid label len", round(np.std(batch_valid_label_lens), 3))
+        print("median batch valid label len", sorted(batch_valid_label_lens)[len(batch_valid_label_lens) // 2])
