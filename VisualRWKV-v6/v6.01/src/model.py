@@ -392,19 +392,21 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        # unidiction
-        # logits = self.rwkv(x)
-        # bidirectional
-        logits = self.bidirectional_forward(x)
+        logits = self.multidirectional_forward(x)
         return logits, targets
 
-    def bidirectional_forward(self, x, x_emb=None):
+    def multidirectional_forward(self, x, x_emb=None):
         args = self.args
+        B, T, C = x.size()
+        H = W = int((self.img_end-self.img_start)**0.5)
 
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
 
         for i, block in enumerate(self.rwkv.blocks):
+            do_transpose = (i % 4 >=2) 
+            if do_transpose: # transpose
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
             do_reverse = (i % 2 == 1)
             if do_reverse: # reverse
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
@@ -416,6 +418,8 @@ class VisualRWKV(pl.LightningModule):
             
             if do_reverse: # reverse back
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+            if do_transpose: # transpose back
+                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].view(B, H, W, C).transpose(1, 2).contiguous().view(B, H*W, C)
 
         x = self.rwkv.ln_out(x)
 
@@ -578,7 +582,7 @@ class VisualRWKV(pl.LightningModule):
         # generate
         generated = []
         for i in range(max_new_tokens):
-            logits = self.bidirectional_forward(x)[:, -1, :]
+            logits = self.multidirectional_forward(x)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
