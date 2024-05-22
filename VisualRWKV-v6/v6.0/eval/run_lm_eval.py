@@ -37,9 +37,11 @@ eval_tasks = []
 #eval_tasks += ['lambada_openai']
 #eval_tasks += ['hellaswag','winogrande']
 eval_tasks += ['lambada_openai','piqa','storycloze_2016','hellaswag','winogrande']
-#eval_tasks += ['arc_challenge','arc_easy','openbookqa','sciq']
-#eval_tasks += ['record','copa']
+eval_tasks += ['arc_challenge','arc_easy','headqa', 'openbookqa','sciq']
+eval_tasks += ['record']
 # copa bug: ConnectionError: Couldn't reach https://nlp.stanford.edu/data/coqa/coqa-train-v1.0.json (error 503), the server is down.
+# fix storycloze_2016 bug: open lm_eval/tasks/storycloze/storycloze_2016.yaml, change dataset_path to: MoE-UNC/story_cloze and change dataset_name to: default
+# fix headqa bug: open lm_eval/tasks/headqa/headqa_en.yaml, change dataset_path to: head_qa
 
 RWKV_PAD = pipeline.tokenizer.encode('\n') # we will use '\n' as PAD
 STOP_TOKEN = RWKV_PAD + pipeline.tokenizer.encode('\n\n') # we will use '\n\n' as STOP
