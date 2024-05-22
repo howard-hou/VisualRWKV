@@ -37,8 +37,7 @@ eval_tasks = []
 #eval_tasks += ['lambada_openai']
 #eval_tasks += ['hellaswag','winogrande']
 eval_tasks += ['lambada_openai','piqa','storycloze_2016','hellaswag','winogrande']
-eval_tasks += ['arc_challenge','arc_easy','headqa', 'openbookqa','sciq']
-eval_tasks += ['record']
+eval_tasks += ['arc_challenge','arc_easy','headqa_en', 'openbookqa','sciq']
 # copa bug: ConnectionError: Couldn't reach https://nlp.stanford.edu/data/coqa/coqa-train-v1.0.json (error 503), the server is down.
 # fix storycloze_2016 bug: open lm_eval/tasks/storycloze/storycloze_2016.yaml, change dataset_path to: MoE-UNC/story_cloze and change dataset_name to: default
 # fix headqa bug: open lm_eval/tasks/headqa/headqa_en.yaml, change dataset_path to: head_qa
@@ -220,4 +219,5 @@ results = adapter.run_eval(
 )
 print(json.dumps(results['results'], indent=2))
 metric_output_path = MODEL_NAME.replace('.pth', '_llm-eval-metric.json')
-json.dump(results['results'], open(metric_output_path, 'w'), indent=2)
+output_dict= dict(model=MODEL_NAME, results=results['results'])
+json.dump(output_dict, open(metric_output_path, 'w'), indent=2)
