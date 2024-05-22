@@ -44,8 +44,6 @@ eval_tasks += ['arc_challenge','arc_easy','headqa_en', 'openbookqa','sciq']
 
 # multilingual
 eval_tasks += ['lambada_multilingual', 'xstorycloze', 'xwinograd', 'xcopa']
-# set num_fewshot
-num_fewshot = None
 
 RWKV_PAD = pipeline.tokenizer.encode('\n') # we will use '\n' as PAD
 STOP_TOKEN = RWKV_PAD + pipeline.tokenizer.encode('\n\n') # we will use '\n\n' as STOP
@@ -205,11 +203,10 @@ class EvalHarnessAdapter(HFLM):
 
 
     @torch.no_grad()
-    def run_eval(self, eval_tasks=None, num_fewshot=None, bootstrap_iters=2):
+    def run_eval(self, eval_tasks=None, bootstrap_iters=2):
         results = evaluator.evaluate(
             lm=self,
             task_dict=tasks.get_task_dict(eval_tasks),
-            num_fewshot=num_fewshot,
             limit=None,
             bootstrap_iters=bootstrap_iters,
         )
@@ -218,12 +215,10 @@ class EvalHarnessAdapter(HFLM):
 adapter = EvalHarnessAdapter()
 results = adapter.run_eval(
     eval_tasks=eval_tasks,
-    num_fewshot=num_fewshot,
     bootstrap_iters=10000,
 )
 print(json.dumps(results['results'], indent=2))
-task_str = '-'.join(eval_tasks) + ('' if num_fewshot is None else f'_{num_fewshot}fewshot')
+task_str = '-'.join(eval_tasks)
 metric_output_path = MODEL_NAME.replace('.pth', f'_{task_str}.json')
-output_dict= dict(model=MODEL_NAME, tasks=eval_tasks, 
-                  num_fewshot=num_fewshot, results=results['results'])
+output_dict= dict(model=MODEL_NAME, tasks=eval_tasks, results=results['results'])
 json.dump(output_dict, open(metric_output_path, 'w'), indent=2)
