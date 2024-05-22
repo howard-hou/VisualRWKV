@@ -218,4 +218,6 @@ results = adapter.run_eval(
     eval_tasks=eval_tasks,
     bootstrap_iters=10000,
 )
-print(results['results'])
+print(json.dumps(results['results'], indent=2))
+metric_output_path = MODEL_NAME.replace('.pth', '_llm-eval-metric.json')
+json.dump(results['results'], open(metric_output_path, 'w'), indent=2)
