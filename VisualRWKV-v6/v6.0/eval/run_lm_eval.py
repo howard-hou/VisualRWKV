@@ -43,6 +43,9 @@ eval_tasks += ['record']
 # fix storycloze_2016 bug: open lm_eval/tasks/storycloze/storycloze_2016.yaml, change dataset_path to: MoE-UNC/story_cloze and change dataset_name to: default
 # fix headqa bug: open lm_eval/tasks/headqa/headqa_en.yaml, change dataset_path to: head_qa
 
+# multilingual
+eval_tasks += ['lambada_multilingual', 'xstorycloze', 'xwinograd', 'xcopa']
+
 RWKV_PAD = pipeline.tokenizer.encode('\n') # we will use '\n' as PAD
 STOP_TOKEN = RWKV_PAD + pipeline.tokenizer.encode('\n\n') # we will use '\n\n' as STOP
 # RWKV_PAD = [0] # you can try using [0] as pad
