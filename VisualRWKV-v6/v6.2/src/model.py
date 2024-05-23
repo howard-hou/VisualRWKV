@@ -92,6 +92,34 @@ def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
 
 ########################################################################################################
 
+class StateEncoder(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+
+        self.args = args
+
+        encoded_dim = 64
+        dim_factor = 8
+
+        self.head_size = args.head_size_a
+        self.n_head = args.dim_att // args.head_size_a
+
+        self.encoded_state = nn.Parameter(torch.zeros(self.n_head, encoded_dim)).normal_(mean=0.0, std=0.02)
+
+        self.state_proj_1 = nn.Linear(encoded_dim, encoded_dim * dim_factor)
+        self.state_proj_2 = nn.Linear(encoded_dim * dim_factor, self.head_size * self.head_size)
+
+        self.state_ln1 = nn.LayerNorm(encoded_dim * dim_factor)
+        self.state_ln2 = nn.LayerNorm(self.head_size * self.head_size)
+
+    def forward(self):
+        out = self.state_proj_1(self.encoded_state)
+        out = torch.tanh(self.state_ln1(out))
+        out = self.state_proj_2(out)
+        out = self.state_ln2(out)
+        return out.reshape(self.n_head, self.head_size, self.head_size)
+
+
 class RWKV_Tmix_x060_state(MyModule):
     def __init__(self, args, layer_id):
         super().__init__()
@@ -137,7 +165,7 @@ class RWKV_Tmix_x060_state(MyModule):
                 tmp[n] = ratio_0_to_1 * (1 - (n / (args.dim_att - 1))) + zigzag
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-            self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
+            self.time_state = StateEncoder(args)
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
@@ -189,7 +217,7 @@ class RWKV_Tmix_x060_state(MyModule):
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x = RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=self.time_state)
+        x = RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=self.time_state())
 
         return self.jit_func_2(x, g)
 
@@ -369,7 +397,8 @@ class VisualRWKV(pl.LightningModule):
     def enable_state_tuning(self):
         # fine-tune time state all the time
         for block in self.rwkv.blocks:
-            block.att.time_state.requires_grad_(True)
+            for p in block.att.time_state.parameters():
+                p.requires_grad_(True)
 
     def freeze_proj(self):
         self.proj.requires_grad_(False)
