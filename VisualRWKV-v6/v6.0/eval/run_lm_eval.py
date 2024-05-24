@@ -244,5 +244,5 @@ results = adapter.run_eval(
 print(json.dumps(results['results'], indent=2))
 task_str = '-'.join(eval_tasks)
 metric_output_path = MODEL_NAME.replace('.pth', f'_{task_str}.json')
-output_dict= dict(model=MODEL_NAME, tasks=eval_tasks, results=results['results'])
+output_dict= dict(model=MODEL_NAME, tasks=eval_tasks, num_fewshot=num_fewshot, results=results['results'])
 json.dump(output_dict, open(metric_output_path, 'w'), indent=2)
