@@ -45,6 +45,13 @@ eval_tasks += ['arc_challenge','arc_easy','headqa_en', 'openbookqa','sciq']
 # multilingual
 eval_tasks += ['lambada_multilingual', 'xstorycloze', 'xwinograd', 'xcopa']
 
+# mmlu
+eval_tasks += ['mmlu']
+
+# set num_fewshot
+num_fewshot = 0 # default, please change it by task
+
+
 RWKV_PAD = pipeline.tokenizer.encode('\n') # we will use '\n' as PAD
 STOP_TOKEN = RWKV_PAD + pipeline.tokenizer.encode('\n\n') # we will use '\n\n' as STOP
 # RWKV_PAD = [0] # you can try using [0] as pad
@@ -203,18 +210,35 @@ class EvalHarnessAdapter(HFLM):
 
 
     @torch.no_grad()
-    def run_eval(self, eval_tasks=None, bootstrap_iters=2):
+    def run_eval(self, eval_tasks=None, num_fewshot=None, limit=None, bootstrap_iters=2, fewshot_random_seed=1234):
+        ''' Run evaluation on the given tasks.
+        :param eval_tasks: list of task names to evaluate on
+        :param num_fewshot: number of few-shot examples to evaluate on
+        '''
+        task_dict = tasks.get_task_dict(eval_tasks)
+        if num_fewshot is None:
+            num_fewshot = {task: 0 for task in task_dict}
+        for task_name in task_dict:
+            task_obj = task_dict[task_name]
+            if isinstance(task_obj, tuple):
+                _, task_obj = task_obj
+                if task_obj is None:
+                    continue
+            task_obj.set_config(key="num_fewshot", value=num_fewshot)
+
         results = evaluator.evaluate(
             lm=self,
-            task_dict=tasks.get_task_dict(eval_tasks),
-            limit=None,
+            task_dict=task_dict,
+            limit=limit,
             bootstrap_iters=bootstrap_iters,
         )
         return results
 
 adapter = EvalHarnessAdapter()
+print(f'Running evaluation on {eval_tasks} with {num_fewshot}-shot examples')
 results = adapter.run_eval(
     eval_tasks=eval_tasks,
+    num_fewshot=num_fewshot,
     bootstrap_iters=10000,
 )
 print(json.dumps(results['results'], indent=2))

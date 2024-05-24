@@ -166,6 +166,7 @@ class RWKV_Tmix_x060_state(MyModule):
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
             self.time_state = StateEncoder(args)
+            #self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
@@ -601,7 +602,7 @@ class VisualRWKV(pl.LightningModule):
         # generate
         generated = []
         for i in range(max_new_tokens):
-            logits = self.rwkv(x)[:, -1, :]
+            logits = self.bidirectional_forward(x)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
