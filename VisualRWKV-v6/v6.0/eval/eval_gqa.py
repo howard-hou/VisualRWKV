@@ -454,6 +454,8 @@ for m in metrics:
     print("{title}: {score:.2f}{suffix}".format(title = m.capitalize(), score = scores[m], 
         suffix = " (lower is better)" if m == "distribution" else "%"))
 
+json.dump(scores, open(args.predictions.replace(".json", "_metrics.json"), "w"), indent = 2)
+
 for m, mPrintName in detailedMetrics:
     print("")
     # print metric title
@@ -480,7 +482,7 @@ if badcases:
         print("   Predicted Answer: {}".format(bc["predictedAnswer"]))
         print("   Question ID: {}".format(bc["questionId"]))
         print("")
-        if i > 10:
+        if i + 1 == 10:
             break
 else:
     print("\nNo bad cases found.")
