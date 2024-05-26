@@ -42,7 +42,7 @@ for IDX in $(seq 0 $((CHUNKS-1))); do
         --image_folder $eval_dir/eval/pope/val2014 \
         --question_file $eval_dir/eval/pope/llava_pope_test.jsonl \
         --output_file $eval_dir/eval/pope/answers/$exp_name/${CHUNKS}_${IDX}.jsonl \
-        --image_position $image_position \ 
+        --image_position $image_position \
         --num_chunks $CHUNKS \
         --chunk_idx $IDX &
     echo "Started chunk $IDX"
