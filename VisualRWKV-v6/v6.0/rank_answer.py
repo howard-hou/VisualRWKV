@@ -126,10 +126,11 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
             image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
     return image_tensor
 
+
 def eval_model(args):
     # load candidate file
     candidates = json.load(open(args.candidate_file))
-    candidates= [" "+c.strip() for c in candidates] # add space to avoid tokenization issue
+    candidates= [" "+c.strip().capitalize() for c in candidates] # add space to avoid tokenization issue
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
@@ -145,7 +146,6 @@ def eval_model(args):
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     # convert candidates to ids
     candidate_ids = [tokenizer.encode(c) for c in candidates]
-    print(candidates[-1], candidate_ids[-1])
     # prepare candidates tensor
     candidate_max_len = max([len(c) for c in candidate_ids])
     candidate_tensor = torch.zeros((len(candidate_ids), candidate_max_len), dtype=torch.long, device=args.device)
@@ -195,23 +195,45 @@ def eval_model(args):
             # get first output logits
             logits = model.bidirectional_forward(x)[:, -1, :]
             prob_first_token = F.softmax(logits, dim=1).index_select(dim=1, index=candidate_first_token) 
-            topk_probs, topk_ids = prob_first_token.topk(k, dim=1)
-            print("topk_probs: ", topk_probs)
-            print("topk_ids: ", topk_ids)
+            topk_probs, topk_ids = prob_first_token.topk(k, dim=1) # [1, k]
+            topk_probs = topk_probs.squeeze(0).cpu().tolist()
+            topk_ids = topk_ids.squeeze(0).cpu().tolist() # [k]
             # get topk candidates
-            topk_candidate_ids = candidate_tensor[topk_ids[0]]
-            topk_candidate_emb = model.rwkv.emb(topk_candidate_ids).unsqueeze(0)
-            xx = torch.cat([x, topk_candidate_emb], dim=1)
-            xx_logits = model.bidirectional_forward(xx)
-            print(xx_logits.shape)
-            exit()
-
-
-        output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
+            topk_candidate_ids = [candidate_tensor[topk_id] for topk_id in topk_ids]
+            topk_candidate_ids = torch.stack(topk_candidate_ids, dim=0) # [k, max_len]
+            topk_candidate_emb = model.rwkv.emb(topk_candidate_ids) # [k, max_len, n_embd]
+            xx = torch.cat([x.repeat(k, 1, 1), topk_candidate_emb], dim=1) # [k, seq_len+max_len, n_embd]
+            candidate_logits = model.bidirectional_forward(xx)[:, -(candidate_max_len+1):-1, :]
+            # get candidate logits, prob and CE loss
+            candidate_dict = {}
+            for i in range(k):
+                candidate_input_ids = topk_candidate_ids[i]
+                candidate_logit = candidate_logits[i] # [max_len, vocab_size]
+                targets_ids = candidate_input_ids.masked_fill(candidate_input_ids == 0, -100)
+                candidate_loss = F.cross_entropy(candidate_logit, targets_ids)
+                valid_len = (candidate_input_ids != 0).sum().item()
+                avg_candidate_logit = sum([candidate_logit[i][j] for i, j in enumerate(candidate_input_ids) if j != 0]) / valid_len
+                avg_candidate_prob = [F.softmax(candidate_logit[i], dim=0)[j] for i, j in enumerate(candidate_input_ids) if j != 0]
+                # geometric mean
+                avg_candidate_prob = torch.prod(torch.tensor(avg_candidate_prob))**(1/valid_len)
+                #
+                candidate_name = tokenizer.decode([idx for idx in candidate_input_ids.tolist() if idx != 0]).strip()
+                candidate_dict[candidate_name] = {"loss": candidate_loss.item(), 
+                                                  "avg_prob": avg_candidate_prob.item(), 
+                                                  "avg_logit": avg_candidate_logit.item()}
+        # sort by loss
+        sorted_candidates = sorted(candidate_dict.items(), key=lambda x: x[1]["loss"])
+        output = sorted_candidates[0][0] # the best candidate
+        loss = sorted_candidates[0][1]["loss"]
+        avg_prob = sorted_candidates[0][1]["avg_prob"]
+        avg_logit = sorted_candidates[0][1]["avg_logit"]
 
         out_str = json.dumps({"question_id": idx,
                               "prompt": cur_prompt,
                               "text": output,
+                              "loss": loss,
+                              "avg_prob": avg_prob,
+                              "avg_logit": avg_logit,
                               "model_id": model_name,
                               "metadata": {
                                   "image_file": line.get("image", None),
