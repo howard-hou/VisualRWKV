@@ -346,10 +346,12 @@ badcases = []
 badcase_index = 0
 # Loop over the questions and compute mterics
 for qid, question in tqdm(questions.items()):
-    gold = question["answer"]
-    predicted = predictions[qid]
+    #gold = question["answer"]
+    gold = question["answers"] # add gpt reviewed answer
+    predicted = predictions[qid].lower()
 
-    correct = (predicted == gold)
+    #correct = (predicted == gold)
+    correct = (predicted in gold)
     score = toScore(correct)
 
     wordsNum = getWordsNum(question)
@@ -396,6 +398,8 @@ for qid, question in tqdm(questions.items()):
         # Update histograms for gold and predicted answers
         globalGroup = question["groups"]["global"]
         if globalGroup is not None:
+            if isinstance(gold, list):
+                gold = ';'.join(gold)
             dist["gold"][globalGroup][gold] += 1
             dist["predicted"][globalGroup][predicted] += 1
 

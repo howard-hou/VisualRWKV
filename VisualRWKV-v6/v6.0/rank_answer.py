@@ -4,14 +4,14 @@ os.environ["RWKV_JIT_ON"] = "1"
 import json
 from PIL import Image
 import pandas as pd
-import numpy as np
 import math
 import argparse
 import torch
+import torch.nn.functional as F
 from pathlib import Path
 from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
+from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX, IGNORE_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop, load_image_from_base64
 from transformers import CLIPImageProcessor
@@ -127,12 +127,15 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
     return image_tensor
 
 def eval_model(args):
+    # load candidate file
+    candidates = json.load(open(args.candidate_file))
+    candidates= [" "+c.strip() for c in candidates] # add space to avoid tokenization issue
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path), strict=False)
+    msg = model.load_state_dict(torch.load(model_path, map_location=args.device), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
@@ -140,6 +143,18 @@ def eval_model(args):
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
+    # convert candidates to ids
+    candidate_ids = [tokenizer.encode(c) for c in candidates]
+    print(candidates[-1], candidate_ids[-1])
+    # prepare candidates tensor
+    candidate_max_len = max([len(c) for c in candidate_ids])
+    candidate_tensor = torch.zeros((len(candidate_ids), candidate_max_len), dtype=torch.long, device=args.device)
+    # fill tensor
+    for i, c in enumerate(candidate_ids):
+        candidate_tensor[i, :len(c)] = torch.tensor(c, dtype=torch.long, device=args.device)
+    candidate_first_token = candidate_tensor[:, 0]
+
+
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     image_folder = Path(args.image_folder) if args.image_folder is not None else None
@@ -171,27 +186,32 @@ def eval_model(args):
         input_ids = data_dict['input_ids'].unsqueeze(0).to(args.device)
         cur_prompt = data_dict['input_text']
 
+        # prepare samples
+        sampels = {"input_ids": input_ids, "images": image_tensor, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
+        # prepare embedding, x: [1, seq_len, n_embd]
+        x, _, _ = model.preparing_embedding(sampels, truncate=False)
+        k = 5
         with torch.inference_mode():
-            output_ids, output_logits, output_probs = model.generate(
-                input_ids,
-                images=image_tensor,
-                do_sample=False,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                max_new_tokens=args.max_new_tokens,
-                stop_token_idx=STOP_TOKEN_INDEX)
+            # get first output logits
+            logits = model.bidirectional_forward(x)[:, -1, :]
+            prob_first_token = F.softmax(logits, dim=1).index_select(dim=1, index=candidate_first_token) 
+            topk_probs, topk_ids = prob_first_token.topk(k, dim=1)
+            print("topk_probs: ", topk_probs)
+            print("topk_ids: ", topk_ids)
+            # get topk candidates
+            topk_candidate_ids = candidate_tensor[topk_ids[0]]
+            topk_candidate_emb = model.rwkv.emb(topk_candidate_ids).unsqueeze(0)
+            xx = torch.cat([x, topk_candidate_emb], dim=1)
+            xx_logits = model.bidirectional_forward(xx)
+            print(xx_logits.shape)
+            exit()
+
 
         output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
-        # avg logit
-        avg_logit = sum(output_logits) / len(output_logits)
-        # geometric mean of probs
-        avg_prob = np.prod(output_probs) ** (1.0 / len(output_probs))
 
         out_str = json.dumps({"question_id": idx,
                               "prompt": cur_prompt,
                               "text": output,
-                              "avg_logit": str(round(avg_logit, 3)),
-                              "avg_prob": str(round(avg_prob, 3)),
                               "model_id": model_name,
                               "metadata": {
                                   "image_file": line.get("image", None),
@@ -227,14 +247,15 @@ if __name__ == "__main__":
     parser.add_argument("--image_folder", type=str, default=None)
     parser.add_argument("--question_file", type=str, default=None)
     parser.add_argument("--output_file", type=str, default=None)
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--top_p", type=float, default=None)
+    parser.add_argument("--candidate_file", type=str, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--num_chunks", type=int, default=1)
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dataset_name", type=str, default="default")
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--temperature", type=float, default=0.2)
+    parser.add_argument("--top_p", type=float, default=None)
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)

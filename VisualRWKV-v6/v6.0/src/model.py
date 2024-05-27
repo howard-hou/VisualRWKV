@@ -392,8 +392,6 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        # unidiction
-        # logits = self.rwkv(x)
         # bidirectional
         logits = self.bidirectional_forward(x)
         return logits, targets
@@ -576,7 +574,9 @@ class VisualRWKV(pl.LightningModule):
         # prepare embedding, x: [1, seq_len, n_embd]
         x, _, image_features = self.preparing_embedding(sampels, truncate=False)
         # generate
-        generated = []
+        generated_tokens = []
+        generated_token_logits = []
+        generated_token_probs = []
         for i in range(max_new_tokens):
             logits = self.bidirectional_forward(x)[:, -1, :]
             if do_sample:
@@ -584,9 +584,14 @@ class VisualRWKV(pl.LightningModule):
             else: # greedy
                 # [1, vocab_size] -> [1, 1]
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
-            generated.append(next_token.item())
-            if generated[-1] == stop_token_idx:
+                next_token_logit = logits.gather(-1, next_token)
+                probs = torch.softmax(logits, dim=-1)
+                next_token_prob = probs.gather(-1, next_token)
+            generated_tokens.append(next_token.item())
+            generated_token_logits.append(next_token_logit.item())
+            generated_token_probs.append(next_token_prob.item())
+            if generated_tokens[-1] == stop_token_idx:
                 break
             x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
             x = x[:, -self.args.ctx_len:, :] # truncate
-        return generated
+        return generated_tokens, generated_token_logits, generated_token_probs
