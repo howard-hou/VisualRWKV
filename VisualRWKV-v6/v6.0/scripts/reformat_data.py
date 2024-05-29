@@ -76,5 +76,5 @@ if __name__ == "__main__":
         random.shuffle(data_list)
         print("reformatted data size after shuffle:", len(data_list))
     json.dump(data_list, 
-              open(args.data_file.replace(".json", "_reformatted.json"), "w"),
+              open(args.data_file.replace(".json", f"_{args.max_rounds}rounds.json"), "w"),
               indent=2, ensure_ascii=False)
