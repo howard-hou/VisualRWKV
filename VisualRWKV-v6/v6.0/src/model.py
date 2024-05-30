@@ -379,9 +379,9 @@ class VisualRWKV(pl.LightningModule):
         self.proj.requires_grad_(False)
 
     def configure_optimizers(self):
-        zero_weight_decay_group = [p for p in self.parameters() if not isinstance(p, nn.Linear)]
-        # add weight decay to nn.Linear
-        weight_decay_group = [p for p in self.parameters() if isinstance(p, nn.Linear)] 
+        zero_weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) < 2]
+        # add weight decay to len(p.squeeze().shape) >= 2
+        weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) >= 2] 
 
         name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
         rank_zero_info(f"Name of trainable parameters in optimizers: {name_of_trainable_params}")
