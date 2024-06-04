@@ -28,8 +28,6 @@ CHUNKS=${#GPULIST[@]}
 exp_name=$(basename "${parent_dir}")
 # add model name to exp name
 exp_name="${exp_name}_${model_name}"
-# add ctx_len, grid_size, image_position to exp_name
-exp_name="${exp_name}_ctx${ctx_len}_grid${grid_size}_pos${image_position}"
 echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"

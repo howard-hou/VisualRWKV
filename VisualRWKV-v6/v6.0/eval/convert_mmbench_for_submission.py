@@ -22,7 +22,7 @@ if __name__ == "__main__":
     cur_df = df.copy()
     cur_df = cur_df.drop(columns=['hint', 'category', 'source', 'image', 'comment', 'l2-category'])
     cur_df.insert(6, 'prediction', None)
-    for pred in open(os.path.join(args.result_dir, f"{args.experiment}.jsonl")):
+    for pred in open(os.path.join(args.result_dir, args.experiment, 'merge.jsonl')):
         pred = json.loads(pred)
         cur_df.loc[df['index'] == pred['question_id'], 'prediction'] = pred['text']
 
