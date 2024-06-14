@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_layer", type=int)
     parser.add_argument("--eval_dir", type=str)
     parser.add_argument("--vision_tower_path", type=str)
-    parser.add_argument("--image_position", type=str)
+    parser.add_argument("--image_position", type=str, default="first")
     parser.add_argument("--task_names", type=str, help="comma separated list of task names")
     parser.add_argument("--hyperparameter", type=str, help="hyperparameter to scan")
     parser.add_argument("--hyperparameter_values", type=str, help="comma separated list of hyperparameter values")
