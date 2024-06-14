@@ -569,7 +569,7 @@ class VisualRWKV(pl.LightningModule):
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
         # input_ids: [1, seq_len]
-        # images: [1, 3, 224, 224]
+        # images: [1, 1, 3, 224, 224]
         # do_sample: bool
         # temperature: float
         # top_p: float
