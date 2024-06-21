@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
-from .utils import gpt4v_crop, largest_3n_plus_2_prime
+from .utils import largest_3n_plus_2_prime
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
@@ -198,13 +198,8 @@ class MyDataset(Dataset):
         if 'image' in sample:
             image_file = sample['image']
             image_folder = args.image_folder
-            processor = args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
-            if args.detail == 'high':
-                image = [image] + gpt4v_crop(image)
-                image = processor(images=image, return_tensors='pt')['pixel_values']
-            else:
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values']
+            pixel_values = args.image_processor(image)
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
                                                                   image_position=args.image_position)
         else:
@@ -219,13 +214,9 @@ class MyDataset(Dataset):
         
         # image exist in the data
         if 'image' in sample:
-            data_dict['images'] = image
+            data_dict['images'] = pixel_values
         else:
-            # image does not exist in the data, fill with zeros
-            if args.detail == 'high':
-                crop_size = args.image_processor.crop_size
-                data_dict['images'] = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
-            else:
-                crop_size = args.image_processor.crop_size
-                data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
+            data_dict['images'] = {"dino":torch.zeros(3, 384, 384), 
+                                   "siglip":torch.zeros(3, 384, 384),
+                                   "sam":torch.zeros(3, 1024, 1024),}
         return data_dict

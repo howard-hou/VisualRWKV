@@ -57,7 +57,6 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
