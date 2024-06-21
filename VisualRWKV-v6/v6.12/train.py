@@ -54,7 +54,6 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay_final", default=-1, type=float)
     parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
 
-    parser.add_argument("--vision_backbone_id", default="samdinosiglip-vit-so-384px", type=str)
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze

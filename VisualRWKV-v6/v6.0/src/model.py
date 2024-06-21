@@ -379,19 +379,22 @@ class VisualRWKV(pl.LightningModule):
         self.proj.requires_grad_(False)
 
     def configure_optimizers(self):
-        zero_weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) < 2]
+        zero_weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) < 2 and p.requires_grad]
         # add weight decay to len(p.squeeze().shape) >= 2
-        weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) >= 2] 
+        weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) >= 2 and p.requires_grad] 
 
         name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
         rank_zero_info(f"Name of trainable parameters in optimizers: {name_of_trainable_params}")
         rank_zero_info(f"Number of trainable parameters in optimizers: {len(name_of_trainable_params)}")
-        optim_groups = [{"params": zero_weight_decay_group, "weight_decay": 0.0}]
-        if self.args.weight_decay > 0:
-            optim_groups += [{"params": weight_decay_group, "weight_decay": self.args.weight_decay}]
-            rank_zero_info(f"Number of parameters with weight decay: {len(weight_decay_group)}, with value: {self.args.weight_decay}")
-        else:
-            optim_groups += [{"params": weight_decay_group, "weight_decay": 0.0}] 
+        optim_groups = []
+        if zero_weight_decay_group:
+            optim_groups += [{"params": zero_weight_decay_group, "weight_decay": 0.0}]
+        if weight_decay_group:
+            if self.args.weight_decay > 0:
+                optim_groups += [{"params": weight_decay_group, "weight_decay": self.args.weight_decay}]
+                rank_zero_info(f"Number of parameters with weight decay: {len(weight_decay_group)}, with value: {self.args.weight_decay}")
+            else:
+                optim_groups += [{"params": weight_decay_group, "weight_decay": 0.0}]
         if self.deepspeed_offload:
             return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
