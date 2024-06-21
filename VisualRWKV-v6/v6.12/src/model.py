@@ -18,6 +18,7 @@ if importlib.util.find_spec('deepspeed'):
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
+from .vision import SamDinoSigLIPViTBackbone
 
 def __nop(ob):
     return ob
@@ -343,9 +344,10 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
+        self.vit = SamDinoSigLIPViTBackbone(vision_backbone_id=self.args.vision_backbone_id, 
+                                            image_resize_strategy="resize-naive")
         self.vit.requires_grad_(False)
-        self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))

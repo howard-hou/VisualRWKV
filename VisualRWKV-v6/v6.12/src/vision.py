@@ -3,12 +3,13 @@ dinosiglip_vit.py
 
 Vision backbone that returns concatenated features from both DINOv2 and SigLIP.
 """
+import os
+from pathlib import Path
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Dict,  Optional, Protocol, Tuple, Union
 
-import PIL.Image
 import timm
 import torch
 import torch.nn as nn
@@ -206,12 +207,23 @@ class TimmViTBackbone(VisionBackbone, ABC):
     def half_precision_dtype(self) -> torch.dtype:
         return self.dtype
 
+VISION_HOME = os.environ.get("VISION_HOME")
+if VISION_HOME is None:
+    raise ValueError("VISION_HOME environment variable must be set to the path of the vision models directory.")
+VISION_HOME = Path(VISION_HOME)
+    
+CHECKPOINT_NAMES = {
+    "dino": "timm/vit_large_patch14_reg4_dinov2.lvd142m/pytorch_model.bin",
+    "siglip": "timm/ViT-SO400M-14-SigLIP-384/open_clip_pytorch_model.bin",
+    "siglip2": "timm/ViT-B-16-SigLIP-384/open_clip_model.safetensors",
+    "sam": "facebook/sam_vit_b_01ec64.pth"
+}
 
-Checkpoint_paths = {
-    "dino": "/mnt/data2/Mutil_data/hf_models/vit_large_patch14_reg4_dinov2.lvd142m/pytorch_model.bin",
-    "siglip": "/mnt/data2/Mutil_data/hf_models/ViT-SO400M-14-SigLIP-384/open_clip_pytorch_model.bin",
-    "siglip2": "/mnt/data2/Mutil_data/hf_models/ViT-B-16-SigLIP-384/open_clip_model.safetensors",
-    "sam": "/mnt/data2/Mutil_data/hf_models/sam-vit-base/pytorch_model.bin"
+CHECKPOINT_PATHS = {
+    "dino": VISION_HOME / CHECKPOINT_NAMES["dino"],
+    "siglip": VISION_HOME / CHECKPOINT_NAMES["siglip"],
+    "siglip2": VISION_HOME / CHECKPOINT_NAMES["siglip2"],
+    "sam": VISION_HOME / CHECKPOINT_NAMES["sam"]
 }
 
 
@@ -393,16 +405,16 @@ class SamDinoSigLIPViTBackbone(VisionBackbone):
         super().__init__(vision_backbone_id, image_resize_strategy, default_image_size=default_image_size)
         self.dino_timm_path_or_url = DINOSigLIP_VISION_BACKBONES[vision_backbone_id]["dino"]
         self.siglip_timm_path_or_url = DINOSigLIP_VISION_BACKBONES[vision_backbone_id]["siglip"]
-        self.sam_ckpt_path_or_url = Checkpoint_paths["sam"]
+        self.sam_ckpt_path_or_url = CHECKPOINT_PATHS["sam"]
 
         # Initialize both Featurizers (ViTs) by downloading from HF / TIMM Hub if necessary
         self.dino_featurizer: VisionTransformer = timm.create_model(
-            self.dino_timm_path_or_url, pretrained=True, num_classes=0, img_size=default_image_size, pretrained_cfg_overlay=dict(file=Checkpoint_paths["dino"])
+            self.dino_timm_path_or_url, pretrained=True, num_classes=0, img_size=default_image_size, pretrained_cfg_overlay=dict(file=CHECKPOINT_PATHS["dino"])
         )
         self.dino_featurizer.eval()
 
         self.siglip_featurizer: VisionTransformer = timm.create_model(
-            self.siglip_timm_path_or_url, pretrained=True,  num_classes=0, pretrained_cfg_overlay=dict(file=Checkpoint_paths['siglip'])
+            self.siglip_timm_path_or_url, pretrained=True,  num_classes=0, pretrained_cfg_overlay=dict(file=CHECKPOINT_PATHS['siglip'])
         )
         self.siglip_featurizer.eval()
 

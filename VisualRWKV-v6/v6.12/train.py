@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay_final", default=-1, type=float)
     parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
 
-    parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
+    parser.add_argument("--vision_backbone_id", default="samdinosiglip-vit-so-384px", type=str)
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
@@ -173,14 +173,6 @@ if __name__ == "__main__":
     from src.trainer import train_callback
     from src.dataset import MyDataset
     from src.rwkv_tokenizer import TRIE_TOKENIZER
-    from transformers import AutoImageProcessor
-
-    args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    args.image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_name)
-
-    train_data = MyDataset(args)
-    args.vocab_size = train_data.vocab_size
-
     from src.model import VisualRWKV
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
@@ -193,6 +185,11 @@ if __name__ == "__main__":
     if args.freeze_proj > 0:
         model.freeze_proj()
     model.freeze_emb() # freeze emb all the time
+
+    # init training data
+    args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
+    args.image_processor = model.vit.get_image_transform()
+    train_data = MyDataset(args)
 
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
