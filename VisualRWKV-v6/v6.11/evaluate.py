@@ -13,8 +13,7 @@ from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop, load_image_from_base64
-from transformers import AutoImageProcessor
-
+from src.vision import *
 
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
@@ -88,13 +87,21 @@ def get_input_text_mmbench(line, lang='en'):
     else:
         question = question + '\n' + "Answer with the option's letter from the given choices directly."
     return question
-    
+
+
+def get_input_text_seedbench(line):
+    question = line['text']
+    question = DEFAULT_IMAGE_TOKEN + '\n' + question
+
+    return question
 
 def get_input_text(line, dataset_name):
     if dataset_name == "mmbench":
         return get_input_text_mmbench(line)
     elif dataset_name == "mmbench_cn":
         return get_input_text_mmbench(line, lang='cn')
+    elif dataset_name == "seedbench":
+        return get_input_text_seedbench(line)
     else:
         if "text" in line:
             return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
@@ -102,8 +109,9 @@ def get_input_text(line, dataset_name):
             return line["conversations"][0]["value"]
         else:
             raise ValueError("Cannot find input text in line: {}".format(line))
-    
-def get_input_image_tensor(line, image_folder, image_processor, detail):
+
+
+def get_input_image_tensor(line, image_folder, image_transform, detail):
     if "image" in line:
         image_file = line["image"]
         if image_folder is not None:
@@ -113,17 +121,13 @@ def get_input_image_tensor(line, image_folder, image_processor, detail):
         image = image.convert('RGB')
         if args.detail == 'high':
             image = [image] + gpt4v_crop(image)
-            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
+            image_tensor = image_transform(image)
         else:
-            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+            image_tensor = image_transform(image)
     else:
         # image does not exist in the data, fill with zeros
-        if detail == 'high':
-            size = image_processor.size
-            image_tensor = torch.zeros(7, 3, size['height'], size['width'])
-        else:
-            size = image_processor.size
-            image_tensor = torch.zeros(1, 3, size['height'], size['width'])
+        dummy_image = torch.zeros(3, 384, 384).type(torch.Tensor)
+        image_tensor = {"dino":dummy_image, "siglip":dummy_image}
     return image_tensor
 
 def eval_model(args):
@@ -136,7 +140,8 @@ def eval_model(args):
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_name)
+    vision_backbone = DinoSigLIPViTBackbone(vision_backbone_id="dinosiglip-vit-so-384px", image_resize_strategy="resize-naive")
+    image_processor = vision_backbone.get_image_transform()
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
@@ -158,7 +163,9 @@ def eval_model(args):
         conversations = process_image_tokens_in_conversations(conv.conversations, image_position=args.image_position)
 
         image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
-        image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
+        image_tensor["dino"] = image_tensor["dino"].unsqueeze(0).bfloat16().to(args.device)
+
+        image_tensor["siglip"] = image_tensor["siglip"].unsqueeze(0).bfloat16().to(args.device)
 
         data_dict = preprocess(
             conversations,
@@ -212,7 +219,6 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
-    parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
@@ -227,6 +233,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_chunks", type=int, default=1)
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--vision_backbone_id", default="dinosiglip-vit-so-384px", type=str)
     parser.add_argument("--dataset_name", type=str, default="default")
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
     args = parser.parse_args()
