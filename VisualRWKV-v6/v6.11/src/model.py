@@ -377,6 +377,7 @@ class VisualRWKV(pl.LightningModule):
     def freeze_proj(self):
         self.proj.requires_grad_(False)
 
+
     def configure_optimizers(self):
         trainable_params = [p for p in self.parameters() if p.requires_grad]
         name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
@@ -440,15 +441,7 @@ class VisualRWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
     
     def encode_images(self, images):
-        B, N,  H, W = images["dino"].shape
-        # images = images.view(B*N, C, H, W)
         image_features = self.vit(images)
-        # L, D = image_features.shape[1], image_features.shape[2]
-        # # rerange [B*N, L, D] -> [B, N, L, D]
-        # image_features = image_features.view(B, N, L, D)[:, 0, :, :]
-        # # append mean token
-        # mean_token = image_features.mean(1, keepdim=True)
-        # image_features = torch.cat((image_features, mean_token), dim=1)
         return self.proj(image_features)
 
     def get_max_image_token_indice(self, samples):
