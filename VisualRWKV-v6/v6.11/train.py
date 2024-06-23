@@ -58,18 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
-    # LORA set
-    parser.add_argument("--use_lora", action='store_true', default=False, help="use lora for fine-tuning")
-    parser.add_argument("--emb", action="store_ture", default=False)
-    parser.add_argument("--lora_load", default="", type=str)
-    parser.add_argument("--lora_r", default=8, type=int, help="lora r value")
-    parser.add_argument("--lora_alpha", default=32, help="lora alpha value")
-    parser.add_argument("--lora_dropout", default=0.1, type=float, help="lora dropout rate")
-    parser.add_argument("--lora_parts", default="att,ln,time", type=str)
-
-    # PISSA set
-    parser.add_argument("--PISSA", action="store_ture", default=False)
-    parser.add_argument("--svd_niter", default=4, type=int)
+    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -85,12 +74,11 @@ if __name__ == "__main__":
     if args.random_seed >= 0:
         print(f"########## WARNING: GLOBAL SEED {args.random_seed} THIS WILL AFFECT MULTIGPU SAMPLING ##########\n" * 3)
         seed_everything(args.random_seed)
-
     np.set_printoptions(precision=4, suppress=True, linewidth=200)
     warnings.filterwarnings("ignore", ".*Consider increasing the value of the `num_workers` argument*")
     warnings.filterwarnings("ignore", ".*The progress bar already tracks a metric with the*")
     # os.environ["WDS_SHOW_SEED"] = "1"
-
+    args.devices = 1
     args.my_timestamp = datetime.datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     args.enable_checkpointing = False
     args.replace_sampler_ddp = False
@@ -101,6 +89,7 @@ if __name__ == "__main__":
     args.log_every_n_steps = int(1e20)
     args.max_epochs = args.epoch_count  # continue forever
     args.betas = (args.beta1, args.beta2)
+
     args.real_bsz = int(args.num_nodes) * int(args.devices) * args.micro_bsz
     os.environ["RWKV_CTXLEN"] = str(args.ctx_len)
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
@@ -184,7 +173,7 @@ if __name__ == "__main__":
 
     args.tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     # args.image_processor = AutoImageProcessor.from_pretrained(args.vision_backbone_id)
-    train_data = MyDataset(args)
+    train_data = MyDataset(args,)
     args.vocab_size = train_data.vocab_size
 
     from src.model import VisualRWKV
@@ -199,17 +188,6 @@ if __name__ == "__main__":
     if args.freeze_proj > 0:
         model.freeze_proj()
 
-    # if choose the lora fine-tuning
-    if args.use_lora:
-        from peft import LoraConfig, get_peft_model
-        lora_config = LoraConfig(
-            r=args.lora_r,
-            lora_alpha=args.lora_alpha,
-            target_modules=["q_proj", "v_proj"],
-            lora_dropout=args.lora_dropoutm,
-            bias="none"
-        )
-        model = get_peft_model(model, lora_config)
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
     if trainer.global_rank == 0:
