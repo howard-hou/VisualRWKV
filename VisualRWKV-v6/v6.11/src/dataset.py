@@ -1,3 +1,4 @@
+
 ########################################################################################################
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
@@ -19,7 +20,6 @@ IMAGE_TOKEN_INDEX = -200
 DEFAULT_IMAGE_TOKEN = "<image>"
 STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
-
 
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
@@ -143,6 +143,7 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_
 
 class MyDataset(Dataset):
     def __init__(self, args):
+
         self.args = args
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
@@ -158,7 +159,6 @@ class MyDataset(Dataset):
             "resize-naive"
         )
         self.vision_backbone = vision_backbone
-
     def __len__(self):
         return self.args.epoch_steps * self.args.micro_bsz
 
@@ -180,22 +180,16 @@ class MyDataset(Dataset):
         if 'image' in sample:
             image_file = sample['image']
             image_folder = args.image_folder
-            # processor = args.image_processor
             image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
             if args.detail == 'high':
                 image = [image] + gpt4v_crop(image)
                 pixel_values = image_transform(image)
             else:
                 pixel_values = image_transform(image)
-
-            # if isinstance(pixel_values, torch.Tensor):
-            #     pixel_values = pixel_values[None, ...]
-            # elif isinstance(pixel_values, dict):
-            #     pixel_values = {k: v[None, ...] for k, v in pixel_values.items()}
-            # else:
-            #     raise ValueError(f"Unsupported `pixel_values` type = {type(pixel_values)}")
-            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
+            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   image_position=args.image_position)
+            # processor = args.image_processor
+
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
@@ -205,13 +199,11 @@ class MyDataset(Dataset):
             has_image=('image' in sample),
             ctx_len=args.ctx_len,
             pad_token_id=0)
-        
         # image exist in the data
         if 'image' in sample:
             data_dict['images'] = pixel_values
         else:
-            # image does not exist in the data, fill with zeros
-            size = self.vision_backbone.default_image_size
-            data_dict['images'] = {"dino":torch.zeros(3, size, size), "siglip":torch.zeros(3, size, size)}
-
+            # image does not exist in the data, fill with zeros\
+            dummy_image = torch.zeros(3, 384, 384).type(torch.Tensor)
+            data_dict['images'] = {"dino":dummy_image, "siglip":dummy_image}
         return data_dict
