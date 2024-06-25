@@ -3,20 +3,51 @@
   <img src="./rwkv_emoji.png" alt="Logo" width="200">
 </p>
 
-📖 [Technical report]() | 🤗 [Model](https://huggingface.co/howard-hou/visualrwkv-5) | 🐰 [Demo](https://huggingface.co/spaces/howard-hou/VisualRWKV-Gradio-1)
+📖 [Paper](https://arxiv.org/abs/2406.13362) | 🤗 [Model](https://huggingface.co/howard-hou/visualrwkv-6) | 🐰 [Demo](https://huggingface.co/spaces/howard-hou/VisualRWKV-Gradio-1)
 
-VisualRWKV is the visual-enhanced version of the RWKV language model, enabling RWKV to handle various visual tasks.By utilizing a loosely coupled adapter design, visual capabilities can be effortlessly enhanced while preserving the performance of the RWKV language model. This approach allows for easy integration and interchangeability without compromising the core functionality of RWKV.
+VisualRWKV is a visual language model based on RWKV language model, enabling RWKV to handle various visual tasks.
 
-![comparison](comparison_5.0.png)
+**VisualRWKV: Exploring Recurrent Neural Networks for Visual Language Models** [Paper](https://arxiv.org/abs/2406.13362)
+
+**Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence** [Paper](https://arxiv.org/abs/2404.05892)
+
+## News and Updates
+* 2024.06.25 🔥 **VisualRWKV-6.0 checkpoints are released!**
+* 2024.05.11 🔥 **VisualRWKV-6.0 code is released!** [code](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
+* 2024.03.25 🔥 **VisualRWKV-5.0 is released!**
+
 
 ## Architecture
 <p align="center">
-  <img src="./VisualRWKV-5.0-arch.png" alt="Logo" width="800">
+  <img src="./VisualRWKV-arch.png" alt="Logo" width="800">
 </p>
 
-## News and Updates
-* 2024.05.11 🔥 **VisualRWKV-6.0 is released!**. 
-* 2024.03.25 🔥 **VisualRWKV-5.0 is released!**. 
+## Model Zoo
+VisualRWKV weights, checkpoints, and related results are shown in the following markdown[Model Zoo](./MODEL_ZOO.md)
+
+
+## Install
+1. Clone this repository and navigate to VisualRWKV folder, VisualRWKV-v6.0 is the stable version.
+```bash
+git clone https://github.com/howard-hou/VisualRWKV.git
+cd VisualRWKV-v6/v6.0
+```
+
+2. Install Package
+```Shell
+conda create -n llava python=3.10 -y
+conda activate visualrwkv
+pip install --upgrade pip  # enable PEP 660 support
+
+#reference:
+pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
+pip install pytorch-lightning==1.9.5 deepspeed==0.7.0 wandb ninja
+
+best performance:
+pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu121
+pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
+```
+
 
 ## Pre-training and Fine-tuning
 **Lastest stable verion is VisualRWKV-v6/v6.0, please cd to the dir VisualRWKV-v6/v6.0 for running the code.**
