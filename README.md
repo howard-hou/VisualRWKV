@@ -1,4 +1,4 @@
-# VisualRWKV: A Visual-Enhanced RWKV
+# VisualRWKV: Visual Language model based on RWKV
 <p align="center">
   <img src="./rwkv_emoji.png" alt="Logo" width="200">
 </p>
@@ -7,12 +7,12 @@
 
 VisualRWKV is a visual language model based on RWKV language model, enabling RWKV to handle various visual tasks.
 
-**VisualRWKV: Exploring Recurrent Neural Networks for Visual Language Models** [Paper](https://arxiv.org/abs/2406.13362)
+**VisualRWKV: Exploring Recurrent Neural Networks for Visual Language Models** [[Paper]](https://arxiv.org/abs/2406.13362)
 
-**Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence** [Paper](https://arxiv.org/abs/2404.05892)
+**Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence** [[Paper]](https://arxiv.org/abs/2404.05892)
 
 ## News and Updates
-* 2024.06.25 🔥 **VisualRWKV-6.0 checkpoints are released!**
+* 2024.06.25 🔥 **VisualRWKV-6.0 checkpoints are released!** [weights](./MODEL_ZOO.md)
 * 2024.05.11 🔥 **VisualRWKV-6.0 code is released!** [code](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
 * 2024.03.25 🔥 **VisualRWKV-5.0 is released!**
 
@@ -23,7 +23,7 @@ VisualRWKV is a visual language model based on RWKV language model, enabling RWK
 </p>
 
 ## Model Zoo
-VisualRWKV weights, checkpoints, and related results are shown in the following markdown[Model Zoo](./MODEL_ZOO.md)
+VisualRWKV weights, checkpoints, and related results are shown in the following markdown[[Model Zoo]](./MODEL_ZOO.md).
 
 
 ## Install
