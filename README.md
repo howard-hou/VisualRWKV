@@ -12,8 +12,8 @@ VisualRWKV is a visual language model based on RWKV language model, enabling RWK
 **Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence** [[Paper]](https://arxiv.org/abs/2404.05892)
 
 ## News and Updates
-* 2024.06.25 🔥 **VisualRWKV-6.0 checkpoints are released!** [weights](./MODEL_ZOO.md)
-* 2024.05.11 🔥 **VisualRWKV-6.0 code is released!** [code](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
+* 2024.06.25 🔥 **VisualRWKV-6.0 checkpoints are released!** [[weights]](./MODEL_ZOO.md)
+* 2024.05.11 🔥 **VisualRWKV-6.0 code is released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
 * 2024.03.25 🔥 **VisualRWKV-5.0 is released!**
 
 
