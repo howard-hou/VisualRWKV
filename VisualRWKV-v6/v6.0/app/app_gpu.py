@@ -8,6 +8,7 @@ import gc
 import gradio as gr
 import base64
 from io import BytesIO
+from pathlib import Path
 import torch
 import torch.nn.functional as F
 from datetime import datetime
@@ -19,13 +20,30 @@ gpu_h = nvmlDeviceGetHandleByIndex(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ctx_limit = 3500
-title = 'ViusualRWKV-v5'
-rwkv_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_rwkv.pth"
-vision_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_visual.pth"
+title = 'ViusualRWKV-v6.0'
+visualrwkv_remote_path = "VisualRWKV-v060-1B6-v1.0-20240612.pth"
+model_path = hf_hub_download(repo_id="howard-hou/visualrwkv-6", filename=visualrwkv_remote_path)
+# convert visualrwkv to RWKV and vision encoder #######################
+output_dir = Path(model_path).parent
+state_dict = torch.load(model_path, map_location="cpu")
+rwkv_state_dict = {}
+visual_state_dict = {}
+for key in state_dict:
+    if key.startswith("rwkv"):
+        rwkv_state_dict[key[5:]] = state_dict[key].half()
+    else:
+        visual_state_dict[key] = state_dict[key].half()
+# save 
+vision_local_path = output_dir / f"visual.pth"
+rwkv_local_path = output_dir / f"rwkv.pth"
+torch.save(rwkv_state_dict, rwkv_local_path)
+torch.save(visual_state_dict, vision_local_path)
+print("rwkv state dict has keys: ", len(rwkv_state_dict), "saved to ", rwkv_local_path)
+print("visual state dict has keys: ", len(visual_state_dict), "saved to ", vision_local_path)
+##########################################################################
 vision_tower_name = 'openai/clip-vit-large-patch14-336'
 
-model_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=rwkv_remote_path)
-model = RWKV(model=model_path, strategy='cuda fp16')
+model = RWKV(model=str(rwkv_local_path), strategy='cuda fp16')
 from rwkv.utils import PIPELINE, PIPELINE_ARGS
 pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
 
@@ -35,7 +53,6 @@ config = VisionEncoderConfig(n_embd=model.args.n_embd,
                              vision_tower_name=vision_tower_name, 
                              grid_size=-1)
 visual_encoder = VisionEncoder(config)
-vision_local_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=vision_remote_path)
 vision_state_dict = torch.load(vision_local_path, map_location='cpu')
 visual_encoder.load_state_dict(vision_state_dict, strict=False)
 image_processor = CLIPImageProcessor.from_pretrained(vision_tower_name)
@@ -48,7 +65,7 @@ def generate_prompt(instruction):
 def generate(
     ctx,
     image_state,
-    token_count=200,
+    token_count=512,
     temperature=0.2,
     top_p=0.3,
     presencePenalty = 0.0,
@@ -77,6 +94,8 @@ def generate(
         token = pipeline.sample_logits(out, temperature=args.temperature, top_p=args.top_p)
         if token in args.token_stop:
             break
+        if '\n\n' in out_str:
+            break
         all_tokens += [token]
         for xxx in occurrence:
             occurrence[xxx] *= 0.996        
@@ -93,6 +112,7 @@ def generate(
 
     gpu_info = nvmlDeviceGetMemoryInfo(gpu_h)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print('sampled tokens:', all_tokens)
     print(f'{timestamp} - vram {gpu_info.total} used {gpu_info.used} free {gpu_info.free}')
     del out
     del state
@@ -130,32 +150,28 @@ def pil_image_to_base64(pil_image):
     base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
     return base64_image
 
-image_cache = {}
+
 ln0_weight = model.w['blocks.0.ln0.weight'].to(torch.float32).to(device)
 ln0_bias = model.w['blocks.0.ln0.bias'].to(torch.float32).to(device)
-def compute_image_state(image):
-    base64_image = pil_image_to_base64(image)
-    if base64_image in image_cache:
-        image_state = image_cache[base64_image]
-    else:
-        image = image_processor(images=image.convert('RGB'), return_tensors='pt')['pixel_values']
-        image = image.to(device)
-        image_features = visual_encoder.encode_images(image.unsqueeze(0)).squeeze(0) # [L, D]
-        # apply layer norm to image feature, very important
-        image_features = F.layer_norm(image_features, 
-                                    (image_features.shape[-1],), 
-                                    weight=ln0_weight, 
-                                    bias=ln0_bias)
-        _, image_state = model.forward(embs=image_features, state=None)
-        image_cache[base64_image] = image_state
+def compute_image_state(image, prefix_tokens):
+    image = image_processor(images=image.convert('RGB'), return_tensors='pt')['pixel_values']
+    image = image.to(device)
+    image_features = visual_encoder.encode_images(image.unsqueeze(0)).squeeze(0) # [L, D]
+    # apply layer norm to image feature, very important
+    image_features = F.layer_norm(image_features, 
+                                 (image_features.shape[-1],), 
+                                 weight=ln0_weight, 
+                                 bias=ln0_bias)
+    _, image_state = model.forward(tokens=prefix_tokens, embs=image_features, state=None)
     return image_state
 
 def chatbot(image, question):
     if image is None:
         yield "Please upload an image."
         return
-    image_state = compute_image_state(image)
     input_text = generate_prompt(question)
+    prefix_tokens = pipeline.encode(input_text)[-ctx_limit:]
+    image_state = compute_image_state(image, prefix_tokens)
     for output in generate(input_text, image_state):
         yield output
 
@@ -164,13 +180,13 @@ with gr.Blocks(title=title) as demo:
         with gr.Column():
             image = gr.Image(type='pil', label="Image")
         with gr.Column():
-            prompt = gr.Textbox(lines=8, label="Prompt", 
+            prompt = gr.Textbox(lines=10, label="Prompt", 
                 value="Render a clear and concise summary of the photo.")
             with gr.Row():
                 submit = gr.Button("Submit", variant="primary")
                 clear = gr.Button("Clear", variant="secondary") 
         with gr.Column():
-            output = gr.Textbox(label="Output", lines=10)
+            output = gr.Textbox(label="Output", lines=20)
     data = gr.Dataset(components=[image, prompt], samples=examples, label="Examples", headers=["Image", "Prompt"])
     submit.click(chatbot, [image, prompt], [output])
     clear.click(lambda: None, [], [output])

@@ -1041,7 +1041,10 @@ class RWKV(MyModule):
                 x = embs
                 seq_mode = True
             elif embs is not None and tokens is not None:
-                raise NotImplementedError('Both tokens and embs are provided, how to handle this should be defined')
+                seq_mode = len(tokens) > 1
+                x = w['emb.weight'][tokens if seq_mode else tokens[0]]
+                x = x.to(device=embs.device, dtype=embs.dtype, non_blocking=True)
+                x = torch.cat([x, embs], dim=0)
             else:
                 raise ValueError('Either tokens or embs must be provided')
 
