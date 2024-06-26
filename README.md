@@ -18,7 +18,7 @@ VisualRWKV is a visual language model based on RWKV language model, enabling RWK
 
 
 ## Architecture
-<p align="center">
+<p align="center">  
   <img src="./VisualRWKV-arch.png" alt="Logo" width="800">
 </p>
 

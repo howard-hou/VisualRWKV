@@ -11,7 +11,7 @@ ctx_limit = 3500
 title = 'ViusualRWKV-v5'
 rwkv_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_rwkv.pth"
 vision_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_visual.pth"
-vision_tower_name = 'openai/clip-vit-large-patch14-336'
+vision_tower_dir = 'openai/clip-vit-large-patch14-336'
 
 os.environ["RWKV_JIT_ON"] = '1'
 os.environ["RWKV_CUDA_ON"] = '0' # if '1' then use CUDA kernel for seq mode (much faster)
@@ -25,13 +25,13 @@ pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
 
 ##########################################################################
 config = VisionEncoderConfig(n_embd=model.args.n_embd, 
-                             vision_tower_name=vision_tower_name, 
+                             vision_tower_dir=vision_tower_dir, 
                              grid_size=-1)
 visual_encoder = VisionEncoder(config)
 vision_local_path = hf_hub_download(repo_id="howard-hou/visualrwkv-5", filename=vision_remote_path)
 vision_state_dict = torch.load(vision_local_path, map_location='cpu')
 visual_encoder.load_state_dict(vision_state_dict, strict=False)
-image_processor = CLIPImageProcessor.from_pretrained(vision_tower_name)
+image_processor = CLIPImageProcessor.from_pretrained(vision_tower_dir)
 ##########################################################################
 def generate_prompt(instruction):
     instruction = instruction.strip().replace('\r\n','\n').replace('\n\n','\n')

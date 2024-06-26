@@ -14,7 +14,7 @@ from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, gpt4v_crop, load_image_from_base64
-from transformers import CLIPImageProcessor
+from src.config import VISION_TOWER_CHECKPOINT_NAMES
 
 
 def split_list(lst, n):
@@ -104,39 +104,32 @@ def get_input_text(line, dataset_name):
         else:
             raise ValueError("Cannot find input text in line: {}".format(line))
     
-def get_input_image_tensor(line, image_folder, image_processor, detail):
+def get_input_image_dict(line, image_folder, image_processor):
     if "image" in line:
         image_file = line["image"]
         if image_folder is not None:
-            image = Image.open(image_folder / image_file)
+            image = Image.open(image_folder / image_file).convert("RGB")
         else: # image is base64 encoded
             image = load_image_from_base64(image_file)
-        if args.detail == 'high':
-            image = [image] + gpt4v_crop(image)
-            image_tensor = image_processor(images=image, return_tensors='pt')['pixel_values']
-        else:
-            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values']
+        image_dict = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
     else:
-        # image does not exist in the data, fill with zeros
-        if detail == 'high':
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(7, 3, crop_size['height'], crop_size['width'])
-        else:
-            crop_size = image_processor.crop_size
-            image_tensor = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
-    return image_tensor
+        image_dict = {}
+        for k in image_processor.image_size: # initialize with dummy image
+            image_dict[k] = torch.zeros(3, image_processor.image_size[k], image_processor.image_size[k])
+    return image_dict
 
 def eval_model(args):
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
+    args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)
     msg = model.load_state_dict(torch.load(model_path), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    image_processor = CLIPImageProcessor.from_pretrained(args.vision_tower_name)
+    image_processor = model.vit.get_image_transform()
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
@@ -157,8 +150,10 @@ def eval_model(args):
 
         conversations = process_image_tokens_in_conversations(conv.conversations, image_position=args.image_position)
 
-        image_tensor = get_input_image_tensor(line, image_folder, image_processor, args.detail)
-        image_tensor = image_tensor.unsqueeze(0).bfloat16().to(args.device)
+        image_dict = get_input_image_dict(line, image_folder, image_processor)
+        for k in image_dict:
+            image_dict[k] = image_dict[k].unsqueeze(0).bfloat16().to(args.device)
+            #print(f"image_dict[{k}].shape: {image_dict[k].shape}")
 
         data_dict = preprocess(
             conversations,
@@ -174,7 +169,7 @@ def eval_model(args):
         with torch.inference_mode():
             output_ids, output_logits, output_probs = model.generate(
                 input_ids,
-                images=image_tensor,
+                images=image_dict,
                 do_sample=False,
                 temperature=args.temperature,
                 top_p=args.top_p,
@@ -218,9 +213,8 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
-    parser.add_argument("--vision_tower_name", default="openai/clip-vit-base-patch32", type=str)  # openai/clip-vit-base-patch32
+    parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
-    parser.add_argument("--detail", type=str, default="low")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)

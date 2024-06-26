@@ -346,12 +346,12 @@ badcases = []
 badcase_index = 0
 # Loop over the questions and compute mterics
 for qid, question in tqdm(questions.items()):
-    #gold = question["answer"]
-    gold = question["answers"] # add gpt reviewed answer
+    gold = question["answer"]
+    #gold = question["answers"] # add gpt reviewed answer
     predicted = predictions[qid].lower()
 
-    #correct = (predicted == gold)
-    correct = (predicted in gold)
+    correct = (predicted == gold)
+    #correct = (predicted in gold)
     score = toScore(correct)
 
     wordsNum = getWordsNum(question)

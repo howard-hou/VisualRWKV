@@ -12,6 +12,6 @@ python train.py --load_model "" --wandb "" --proj_dir "out/dummy" \
     --micro_bsz 8 --accumulate_grad_batches 16 --n_layer 6 --n_embd 512 --pre_ffn 0 \
     --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
     --accelerator gpu --devices 1 --precision bf16 --strategy deepspeed_stage_2 --grad_cp 0 \
-    --image_folder dummy_data/images/ --vision_tower_name dummy \
+    --image_folder dummy_data/images/ --vision_tower_dir dummy \
     --freeze_rwkv 0 --freeze_proj 0 --detail low --grid_size -1 \
     --enable_progress_bar False

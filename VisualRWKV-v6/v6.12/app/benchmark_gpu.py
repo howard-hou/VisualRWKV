@@ -27,7 +27,7 @@ def parse_args():
 
 ctx_limit = 3500
 args = parse_args()
-vision_tower_name = 'openai/clip-vit-large-patch14-336'
+vision_tower_dir = 'openai/clip-vit-large-patch14-336'
 
 model = RWKV(model=args.rwkv_path, strategy='cuda fp16')
 from rwkv.utils import PIPELINE, PIPELINE_ARGS
@@ -36,12 +36,12 @@ pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
 ##########################################################################
 from modeling_vision import VisionEncoder, VisionEncoderConfig
 config = VisionEncoderConfig(n_embd=model.args.n_embd, 
-                             vision_tower_name=vision_tower_name, 
+                             vision_tower_dir=vision_tower_dir, 
                              grid_size=-1)
 visual_encoder = VisionEncoder(config)
 vision_state_dict = torch.load(args.vision_path, map_location='cpu')
 visual_encoder.load_state_dict(vision_state_dict, strict=False)
-image_processor = CLIPImageProcessor.from_pretrained(vision_tower_name)
+image_processor = CLIPImageProcessor.from_pretrained(vision_tower_dir)
 visual_encoder = visual_encoder.to(device)
 ##########################################################################
 def generate_prompt(instruction):

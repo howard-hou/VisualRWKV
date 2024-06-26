@@ -55,6 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
 
     parser.add_argument("--image_folder", type=str, default="images")
+    parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
@@ -67,6 +68,7 @@ if __name__ == "__main__":
     ########################################################################################################
 
     import os, warnings, math, datetime, sys, time
+    from pathlib import Path
     import numpy as np
     import torch
     from torch.utils.data import DataLoader
@@ -173,6 +175,8 @@ if __name__ == "__main__":
     from src.dataset import MyDataset
     from src.rwkv_tokenizer import TRIE_TOKENIZER
     from src.model import VisualRWKV
+    from src.config import VISION_TOWER_CHECKPOINT_NAMES
+    args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()

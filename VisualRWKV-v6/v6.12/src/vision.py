@@ -25,27 +25,6 @@ def unpack_tuple(fn: Callable[[Any], Tuple[Any]]) -> Callable[[Any], Any]:
 
     return wrapper
 
-
-VISION_HOME = os.environ.get("VISION_HOME")
-if VISION_HOME is None:
-    raise ValueError("VISION_HOME environment variable must be set to the path of the vision models directory.")
-VISION_HOME = Path(VISION_HOME)
-    
-CHECKPOINT_NAMES = {
-    "dino": "timm/vit_large_patch14_reg4_dinov2.lvd142m/pytorch_model.bin",
-    "siglip": "timm/ViT-SO400M-14-SigLIP-384/open_clip_pytorch_model.bin",
-    "siglip2": "timm/ViT-B-16-SigLIP-384/open_clip_model.safetensors",
-    "sam": "facebook/sam_vit_b_01ec64.pth"
-}
-
-CHECKPOINT_PATHS = {
-    "dino": VISION_HOME / CHECKPOINT_NAMES["dino"],
-    "siglip": VISION_HOME / CHECKPOINT_NAMES["siglip"],
-    "siglip2": VISION_HOME / CHECKPOINT_NAMES["siglip2"],
-    "sam": VISION_HOME / CHECKPOINT_NAMES["sam"]
-}
-
-
 ########################################################################################################
 # === Interface for an Image Transform ===
 class ImageTransform(Protocol):
@@ -57,7 +36,9 @@ class SamDinoSigLIPImageTransform:
     dino_image_transform: ImageTransform
     siglip_image_transform: ImageTransform
     sam_image_transform: ImageTransform
-    is_rwkv: bool = True
+
+    def __post_init__(self) -> None:
+        self.image_size = {"dino": 384, "siglip": 384, "sam": 1024}
 
     def __call__(self, img: Image, **kwargs: str) -> Dict[str, torch.Tensor]:
         sam_pixel_values = self.sam_image_transform(img, return_tensors='pt')['pixel_values'][0]
@@ -67,23 +48,23 @@ class SamDinoSigLIPImageTransform:
 
 
 class SamDinoSigLIPViTBackbone(nn.Module):
-    def __init__(self, default_image_size: int = 384) -> None:
+    def __init__(self, vision_tower_dir: dict, default_image_size: int = 384) -> None:
         super().__init__()
         self.default_image_size = default_image_size
         self.dino_timm_path_or_url = "vit_large_patch14_reg4_dinov2.lvd142m"
         self.siglip_timm_path_or_url = "vit_so400m_patch14_siglip_384"
-        self.sam_ckpt_path_or_url = CHECKPOINT_PATHS["sam"]
+        self.sam_ckpt_path_or_url = vision_tower_dir["sam"]
 
         # Initialize both Featurizers (ViTs) by downloading from HF / TIMM Hub if necessary
         self.dino_featurizer = timm.create_model(
             self.dino_timm_path_or_url, pretrained=True, num_classes=0, img_size=default_image_size, 
-            pretrained_cfg_overlay=dict(file=CHECKPOINT_PATHS["dino"])
+            pretrained_cfg_overlay=dict(file=vision_tower_dir["dino"])
         )
         self.dino_featurizer.eval()
 
         self.siglip_featurizer = timm.create_model(
             self.siglip_timm_path_or_url, pretrained=True,  num_classes=0, 
-            pretrained_cfg_overlay=dict(file=CHECKPOINT_PATHS['siglip'])
+            pretrained_cfg_overlay=dict(file=vision_tower_dir['siglip'])
         )
         self.siglip_featurizer.eval()
 

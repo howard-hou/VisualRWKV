@@ -344,7 +344,7 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = SamDinoSigLIPViTBackbone()
+        self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_dir)
         self.freeze_vit()
         self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
 
@@ -573,7 +573,7 @@ class VisualRWKV(pl.LightningModule):
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
         # input_ids: [1, seq_len]
-        # images: [1, 1, 3, 224, 224]
+        # images: a dict of dino, siglip and sam features, each with shape [1, 3, H_dino, W_dino], [1, 3, H_siglip, W_siglip], [1, 3, H_sam, W_sam]
         # do_sample: bool
         # temperature: float
         # top_p: float

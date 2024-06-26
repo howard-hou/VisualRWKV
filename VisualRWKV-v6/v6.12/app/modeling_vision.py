@@ -7,14 +7,14 @@ from dataclasses import dataclass
 @dataclass
 class VisionEncoderConfig:
     n_embd: int = 2048
-    vision_tower_name: str = 'openai/clip-vit-large-patch14-336'
+    vision_tower_dir: str = 'openai/clip-vit-large-patch14-336'
     grid_size: int = -1 # -1: no grid pooling, 0: take cls token, 1: global avg pooling, 2, 3, 4, ...: grid pooling
 
 class VisionEncoder(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
+        self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_dir)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
 
     def encode_images(self, images):

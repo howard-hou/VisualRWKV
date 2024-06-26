@@ -15,6 +15,6 @@ python train.py --load_model /houhaowenT/huggingface_models/BlinkDL/rwkv-6-world
     --lr_init 1e-3 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
     --accelerator gpu --devices 4 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
     --image_folder /houhaowenT/huggingface_datasets/LLaVA-Pretrain/images/ \
-    --vision_tower_name /houhaowenT/huggingface_models/openai/clip-vit-large-patch14-336 \
+    --vision_tower_dir /houhaowenT/huggingface_models/openai/clip-vit-large-patch14-336 \
     --freeze_rwkv 32 --detail low --grid_size -1 --image_position first \
     --enable_progress_bar True
