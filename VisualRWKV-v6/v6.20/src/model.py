@@ -62,9 +62,10 @@ class WKV_6STATE(torch.autograd.Function):
             assert u.is_contiguous()
             assert s.is_contiguous()
             ctx.save_for_backward(r, k, v, w, u, s)
-            y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            wkv6state_cuda.forward(B, T, C, H, r, k, v, w, u, s, y)
-            return y
+            y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)
+            state = torch.zeros((B, H, C//H, C//H), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)
+            wkv6state_cuda.forward(B, T, C, H, r, k, v, w, u, s, y, state)
+            return y, state
 
     @staticmethod
     def backward(ctx, gy):
@@ -91,34 +92,6 @@ def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     return WKV_6STATE.apply(B, T, C, H, r, k, v, w, u, s)
 
 ########################################################################################################
-
-class StateEncoder(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-
-        self.args = args
-
-        encoded_dim = 64
-        dim_factor = 8
-
-        self.head_size = args.head_size_a
-        self.n_head = args.dim_att // args.head_size_a
-
-        self.encoded_state = nn.Parameter(torch.zeros(self.n_head, encoded_dim)).normal_(mean=0.0, std=0.02)
-
-        self.state_proj_1 = nn.Linear(encoded_dim, encoded_dim * dim_factor)
-        self.state_proj_2 = nn.Linear(encoded_dim * dim_factor, self.head_size * self.head_size)
-
-        self.state_ln1 = nn.LayerNorm(encoded_dim * dim_factor)
-        self.state_ln2 = nn.LayerNorm(self.head_size * self.head_size)
-
-    def forward(self):
-        out = self.state_proj_1(self.encoded_state)
-        out = torch.tanh(self.state_ln1(out))
-        out = self.state_proj_2(out)
-        out = self.state_ln2(out)
-        return out.reshape(self.n_head, self.head_size, self.head_size)
-
 
 class RWKV_Tmix_x060_state(MyModule):
     def __init__(self, args, layer_id):
@@ -165,8 +138,6 @@ class RWKV_Tmix_x060_state(MyModule):
                 tmp[n] = ratio_0_to_1 * (1 - (n / (args.dim_att - 1))) + zigzag
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-            self.time_state = StateEncoder(args)
-            #self.time_state = nn.Parameter(torch.zeros(self.n_head, self.head_size, self.head_size))
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
@@ -205,22 +176,22 @@ class RWKV_Tmix_x060_state(MyModule):
         return r, k, v, g, w
 
     @MyFunction
-    def jit_func_2(self, x, g):
+    def jit_func_2(self, x, g, state):
         B, T, C = x.size()
         x = x.view(B * T, C)
         
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
-        return x
+        return x, state
 
-    def forward(self, x):
+    def forward(self, x, state):
         B, T, C = x.size()
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x = RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=self.time_state())
+        x, state = RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=state)
 
-        return self.jit_func_2(x, g)
+        return self.jit_func_2(x, g, state)
 
 ########################################################################################################
 
@@ -278,14 +249,15 @@ class Block(nn.Module):
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x):
+    def forward(self, x, state):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        x = x + self.att(self.ln1(x))
+        xx, state = self.att(self.ln1(x), state)
+        x = x + xx
         x = x + self.ffn(self.ln2(x))
 
-        return x
+        return x, state
 
 
 class L2Wrap(torch.autograd.Function):
@@ -332,7 +304,7 @@ class RWKV(pl.LightningModule):
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
 
-    def forward(self, x):
+    def forward(self, x, state):
         args = self.args
         # B, T, D = x.size()
         # assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
@@ -342,15 +314,15 @@ class RWKV(pl.LightningModule):
 
         for block in self.blocks:
             if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
+                x, state = deepspeed.checkpointing.checkpoint(block, x, state)
             else:
-                x = block(x)
+                x, state = block(x, state)
 
         x = self.ln_out(x)
 
         x = self.head(x)
 
-        return x
+        return x, state
 
 
 class VisualRWKV(pl.LightningModule):
