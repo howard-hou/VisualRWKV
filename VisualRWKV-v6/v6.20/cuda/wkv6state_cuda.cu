@@ -6,7 +6,7 @@ typedef at::BFloat16 bf16;
 template <typename F>
 __global__ void kernel_forward(const int B, const int T, const int C, const int H,
                                const F *__restrict__ const _r, const F *__restrict__ const _k, const F *__restrict__ const _v, const F *__restrict__ _w, const F *__restrict__ _u, const F *__restrict__ _s,
-                               F *__restrict__ const _y)
+                               F *__restrict__ const _y, F *__restrict__ const _state)
 {
     const int b = blockIdx.x / H;
     const int h = blockIdx.x % H;
@@ -61,6 +61,11 @@ __global__ void kernel_forward(const int B, const int T, const int C, const int 
             s.w = s.w * w_.w + x.w;
         }
         _y[t] = F(y);
+    }
+
+    // Write the final state to the output parameter
+    for (int j = 0; j < _N_; j++) {
+        _state[blockIdx.x * _N_ + j] = state[j];
     }
 }
 
@@ -292,11 +297,11 @@ __global__ void kernel_backward_222(const int B, const int T, const int C, const
     _gw[t_T_1] = 0;
 }
 
-void cuda_forward(int B, int T, int C, int H, bf16 *r, bf16 *k, bf16 *v, bf16 *w, bf16 *u, bf16 *z, bf16 *y)
+void cuda_forward(int B, int T, int C, int H, bf16 *r, bf16 *k, bf16 *v, bf16 *w, bf16 *u, bf16 *z, bf16 *y, bf16 *state)
 {
     assert(H*_N_ == C);
     assert(_N_%4 == 0);
-    kernel_forward<<<dim3(B * H), dim3(_N_)>>>(B, T, C, H, r, k, v, w, u, z, y);
+    kernel_forward<<<dim3(B * H), dim3(_N_)>>>(B, T, C, H, r, k, v, w, u, z, y, state);
 }
 
 void cuda_backward(int B, int T, int C, int H, bf16 *r, bf16 *k, bf16 *v, bf16 *w, bf16 *u, bf16 *z, bf16 *gy, bf16 *gr, bf16 *gk, bf16 *gv, bf16 *gw, bf16 *gu, bf16 *gs)
