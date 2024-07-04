@@ -128,8 +128,12 @@ class SamDinoSigLIPViTBackbone(nn.Module):
 
     def forward(self, pixel_values: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Runs the transformed image/pixel tensors through each vision backbone, returning concatenated patches."""
-        dino_patches = self.dino_featurizer(pixel_values["dino"])[0]
-        siglip_patches = self.siglip_featurizer(pixel_values["siglip"])[0]
+        dino_patches = self.dino_featurizer(pixel_values["dino"])
+        if isinstance(dino_patches, list):
+            dino_patches = dino_patches[0]
+        siglip_patches = self.siglip_featurizer(pixel_values["siglip"])
+        if isinstance(siglip_patches, list):
+            siglip_patches = siglip_patches[0]
         sam_patches = self.sam_featurizer(pixel_values["sam"])
         B, C, H, W = sam_patches.shape
         sam_patches = sam_patches.view(B, C, H*W).permute(0, 2, 1)
