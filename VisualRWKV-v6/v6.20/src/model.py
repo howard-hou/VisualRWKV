@@ -63,12 +63,12 @@ class WKV_6STATE(torch.autograd.Function):
             assert s.is_contiguous()
             ctx.save_for_backward(r, k, v, w, u, s)
             y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)
-            state = torch.zeros((B, H, C//H, C//H), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)
+            state = torch.empty((H, C//H, C//H), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)
             wkv6state_cuda.forward(B, T, C, H, r, k, v, w, u, s, y, state)
             return y, state
 
     @staticmethod
-    def backward(ctx, gy):
+    def backward(ctx, gy, gstate):
         with torch.no_grad():
             assert gy.dtype == torch.bfloat16
             B = ctx.B
@@ -304,25 +304,6 @@ class RWKV(pl.LightningModule):
             return cfg.get("offload_optimizer") or cfg.get("offload_param")
         return False
 
-    def forward(self, x, state):
-        args = self.args
-        # B, T, D = x.size()
-        # assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
-
-        if args.dropout > 0:
-            x = self.drop0(x)
-
-        for block in self.blocks:
-            if args.grad_cp == 1:
-                x, state = deepspeed.checkpointing.checkpoint(block, x, state)
-            else:
-                x, state = block(x, state)
-
-        x = self.ln_out(x)
-
-        x = self.head(x)
-
-        return x, state
 
 
 class VisualRWKV(pl.LightningModule):
@@ -335,6 +316,7 @@ class VisualRWKV(pl.LightningModule):
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
         self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        self.n_head = args.dim_att // args.head_size_a
 
     def load_rwkv_from_pretrained(self, path):
         load_msg = self.rwkv.load_state_dict(torch.load(path, map_location="cpu"), strict=False)
@@ -388,14 +370,13 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        # unidiction
-        # logits = self.rwkv(x)
-        # bidirectional
-        logits = self.bidirectional_forward(x)
+        logits = self.bidirectional_forward(x, x_emb=image_features)
         return logits, targets
 
-    def bidirectional_forward(self, x, x_emb=None):
+    def bidirectional_forward(self, x, x_emb):
         args = self.args
+        init_state = torch.zeros((args.n_layer, self.n_head, args.head_size_a, args.head_size_a), 
+                            device=x.device, dtype=x.dtype, requires_grad=False)
 
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
@@ -403,15 +384,17 @@ class VisualRWKV(pl.LightningModule):
         for i, block in enumerate(self.rwkv.blocks):
             do_reverse = (i % 2 == 1)
             if do_reverse: # reverse
-                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+                x_emb = x_emb.flip(1)
             
             if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
+                _, state = deepspeed.checkpointing.checkpoint(block, x_emb, init_state[i])
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, state)
             else:
-                x = block(x)
+                _, state = block(x_emb, init_state[i])
+                x, _ = block(x, state)
             
             if do_reverse: # reverse back
-                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
+                x_emb = x_emb.flip(1)
 
         x = self.rwkv.ln_out(x)
 
@@ -501,46 +484,24 @@ class VisualRWKV(pl.LightningModule):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
         emb_dtype = samples["images"].dtype
         ### prepare image features
-        image_features  = self.encode_images(samples["images"]) # with cls token
+        image_features  = self.encode_images(samples["images"])
         ### prepare input token
-        new_input_embeds = []
-        new_labels = []
-        max_image_token_indice = self.get_max_image_token_indice(samples)
-        self.img_start = max_image_token_indice
-        self.img_end = max_image_token_indice + (image_features.shape[1] - 1) # exclude cls token
+        new_input_embeds, new_labels = [], []
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             cur_labels = samples["labels"][idx]
-            cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)
-            cur_new_labels = torch.full((max_image_token_indice,), IGNORE_INDEX, device=device, dtype=label_dtype)
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0: # no image in this sample
                 # mask image feature, set to 0
                 image_features[idx] = torch.zeros_like(image_features[idx])
+                cur_new_input_embeds = self.rwkv.emb(cur_input_ids)
+                cur_new_labels = cur_labels
             elif num_images == 1: # only one image in this sample
                 image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
-                # first text part, left paded
-                cur_new_input_ids[-image_token_indice:] = cur_input_ids[:image_token_indice]
-                cur_new_labels[-image_token_indice:] = cur_labels[:image_token_indice]
+                # right part of the image token is the instruction
+                cur_new_input_embeds = self.rwkv.emb(cur_input_ids[image_token_indice+1:])
+                cur_new_labels = cur_labels[image_token_indice+1:]
             else:
                 raise ValueError(f"Too many images in one sample: {num_images}, should be 0 or 1.")
-            # convert to list
-            cur_new_input_embeds = [self.rwkv.emb(cur_new_input_ids)]
-            cur_new_labels = [cur_new_labels]
-            # image part
-            cur_image_features = image_features[idx]
-            cur_new_input_embeds.append(cur_image_features)
-            cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=device, dtype=label_dtype))
-            # last text part
-            if num_images == 1:
-                cur_new_input_embeds.append(self.rwkv.emb(cur_input_ids[image_token_indice+1:]))
-                cur_new_labels.append(cur_labels[image_token_indice+1:])
-            else: # no image
-                cur_new_input_embeds.append(self.rwkv.emb(cur_input_ids))
-                cur_new_labels.append(cur_labels)
-            # concat them
-            cur_new_input_embeds = torch.cat(cur_new_input_embeds)
-            cur_new_labels = torch.cat(cur_new_labels)
-
             new_input_embeds.append(cur_new_input_embeds)
             new_labels.append(cur_new_labels)
         # Truncate sequences to max length as image embeddings can make the sequence longer
