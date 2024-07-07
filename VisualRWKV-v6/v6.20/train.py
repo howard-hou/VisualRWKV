@@ -62,6 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--enable_state_tuning", default=0, type=int)  # state tuning
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
@@ -198,7 +199,7 @@ if __name__ == "__main__":
 
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
-    if trainer.global_rank == 0:
+    if trainer.global_rank == 0 and args.print_param_shape > 0:
         for n in model.state_dict():
             shape = model.state_dict()[n].shape
             shape = [i for i in shape if i != 1]

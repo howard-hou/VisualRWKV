@@ -15,6 +15,8 @@ from transformers import CLIPVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+from einops import rearrange
+from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
@@ -29,15 +31,15 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-from fla.ops.rwkv6 import chunk_rwkv6
-def RUN_FLA_FP32(B, T, C, H, r, k, v, w, u, initial_state=None):
-    r = r.view(B,T,H,-1).transpose(1,2).float()
-    k = k.view(B,T,H,-1).transpose(1,2).float()
-    v = v.view(B,T,H,-1).transpose(1,2).float()
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2).float())
-    o, final_state = chunk_rwkv6(r, k, v, w, u=u.float(), scale=1, initial_state=initial_state, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
 
+def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
+    r = rearrange(r, 'b l (h d) -> b h l d', h = H)
+    k = rearrange(k, 'b l (h d) -> b h l d', h = H)
+    v = rearrange(v, 'b l (h d) -> b h l d', h = H)
+    w = rearrange(-torch.exp(w), 'b l (h d) -> b h l d', h = H)
+    o, state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
+    x = rearrange(o, 'b h l d -> b l (h d)')
+    return x, state
 
 ########################################################################################################
 
@@ -137,7 +139,7 @@ class RWKV_Tmix_x060_state(MyModule):
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x, state = RUN_FLA_FP32(B, T, C, H, r, k, v, w, u=self.time_faaaa, initial_state=state)
+        x, state = RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=state)
 
         return self.jit_func_2(x, g, state)
 
@@ -318,14 +320,28 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        logits = self.bidirectional_forward(x, x_emb=image_features)
+        logits = self.unidirectional_forward(x, x_emb=image_features)
         return logits, targets
+
+    def unidirectional_forward(self, x, x_emb):
+        args = self.args
+        if args.dropout > 0:
+            x = self.rwkv.drop0(x)
+
+        for i, block in enumerate(self.rwkv.blocks):
+            if args.grad_cp == 1:
+                x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, state)
+            else:
+                x_emb, state = block(x_emb, None)
+                x, _ = block(x, state)
+        
+        x = self.rwkv.ln_out(x)
+        x = self.rwkv.head(x)
+        return x
 
     def bidirectional_forward(self, x, x_emb):
         args = self.args
-        init_state = torch.zeros((args.n_layer, self.n_head, args.head_size_a, args.head_size_a), 
-                            device=x.device, dtype=x.dtype, requires_grad=False)
-
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
 
@@ -335,19 +351,17 @@ class VisualRWKV(pl.LightningModule):
                 x_emb = x_emb.flip(1)
             
             if args.grad_cp == 1:
-                _, state = deepspeed.checkpointing.checkpoint(block, x_emb, init_state[i])
+                x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
                 x, _ = deepspeed.checkpointing.checkpoint(block, x, state)
             else:
-                _, state = block(x_emb, init_state[i])
+                x_emb, state = block(x_emb, None)
                 x, _ = block(x, state)
             
             if do_reverse: # reverse back
                 x_emb = x_emb.flip(1)
 
         x = self.rwkv.ln_out(x)
-
         x = self.rwkv.head(x)
-
         return x
     
     def training_step(self, batch, batch_idx):
