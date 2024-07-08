@@ -328,12 +328,14 @@ class VisualRWKV(pl.LightningModule):
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
 
+        init_states = torch.zeros(args.n_layer, x.size(0), self.n_head, args.head_size_a, args.head_size_a, 
+                                  device=x.device, dtype=torch.float32).requires_grad_(True)
         for i, block in enumerate(self.rwkv.blocks):
             if args.grad_cp == 1:
                 x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
                 x, _ = deepspeed.checkpointing.checkpoint(block, x, state)
             else:
-                x_emb, state = block(x_emb, None)
+                x_emb, state = block(x_emb, init_states[i])
                 x, _ = block(x, state)
         
         x = self.rwkv.ln_out(x)
