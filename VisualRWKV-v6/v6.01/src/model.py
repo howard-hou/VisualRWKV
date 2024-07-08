@@ -345,7 +345,7 @@ class VisualRWKV(pl.LightningModule):
             self.load_rwkv_from_pretrained(args.load_model)
         self.vit = CLIPVisionModel.from_pretrained(args.vision_tower_name)
         self.vit.requires_grad_(False)
-        self.proj = nn.Linear(self.vit.config.hidden_size, args.n_embd, bias=False)
+        self.proj = nn.Linear(self.vit.config.hidden_size*2, args.n_embd, bias=False)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -392,7 +392,8 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        logits = self.multidirectional_forward(x)
+        logits = self.rwkv(x) # unidirectional
+        #logits = self.multidirectional_forward(x)
         return logits, targets
 
     def multidirectional_forward(self, x, x_emb=None):
@@ -459,6 +460,8 @@ class VisualRWKV(pl.LightningModule):
         # rerange [B*N, L, D] -> [B, N, L, D]
         image_features = image_features.view(B, N, L, D)[:, 0, :, :]
         image_features = self.grid_pooling(image_features)
+        # reverse the order of the image features and concat
+        image_features = torch.cat((image_features, image_features.flip(1)), dim=2)
         return self.proj(image_features)
     
     def grid_pooling(self, image_features):
