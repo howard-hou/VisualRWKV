@@ -47,6 +47,7 @@ with torch.no_grad():
     v = torch.empty(B, T, C, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
     w = torch.empty(B, T, C, device=DEVICE, dtype=DTYPE).uniform_(-8, 1).requires_grad_(require_grad)
     u = torch.empty(H, HEAD_SIZE, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
+    s = torch.empty(B, H, HEAD_SIZE, HEAD_SIZE, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
 
 def clear_grad():   
     r.requires_grad_()
@@ -54,11 +55,13 @@ def clear_grad():
     v.requires_grad_()
     w.requires_grad_()
     u.requires_grad_()
+    s.requires_grad_()
     if r.grad is not None: r.grad.data.zero_()
     if k.grad is not None: k.grad.data.zero_()
     if v.grad is not None: v.grad.data.zero_()
     if w.grad is not None: w.grad.data.zero_()
     if u.grad is not None: u.grad.data.zero_()
+    if s.grad is not None: s.grad.data.zero_()
 
 
 # step3: load cuda kernel as baseline
