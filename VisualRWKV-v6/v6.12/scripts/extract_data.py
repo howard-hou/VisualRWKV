@@ -6,13 +6,22 @@ from collections import Counter
 
 def analyze_data(data, key):
     # know the distribution of the data
-    image_sets = []
+    image_list = []
+    full_image_list = []
     for line in data:
         if key in line:
             image_set = line[key].split("/")[0]
-            image_sets.append(image_set)
-    counter = Counter(image_sets)
-    print(counter)
+            image_list.append(image_set)
+            if key == "image":
+                full_image_list.append(line[key])
+            if key == "image_dir":
+                for l in line["conversations"]:
+                    if "image" in l:
+                        full_image_list.extend(l["image"])
+    counter = Counter(image_list)
+    print("data distribution:", counter)
+    print("total data:", len(image_list))
+    print("total unique data:", len(set(full_image_list)))
 
 def extract_data(data, analyze_key, keep_key):
     # extract the data based on the given image set

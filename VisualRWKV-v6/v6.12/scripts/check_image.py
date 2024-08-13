@@ -4,10 +4,8 @@ from tqdm import tqdm
 import json
 from PIL import Image
 
-data = json.load(open(sys.argv[1]))
-image_folder = Path(sys.argv[2])
 
-for line in tqdm(data):
+def is_image_valid(line):
     image_dir = line["image_dir"]
     for conv in line["conversations"]:
         if "image" in conv:
@@ -15,7 +13,7 @@ for line in tqdm(data):
                 img_path = image_folder / image_dir / img
                 if not img_path.exists():
                     print(f"Image not found: {img_path}")
-                    continue
+                    return False
                 try:
                     img = Image.open(img_path)
                     # DecompressionBombWarning: Image size (92150000 pixels) exceeds limit of 89478485 pixels, could be decompression bomb DOS attack.
@@ -27,5 +25,26 @@ for line in tqdm(data):
                         print(f"image is too large, resize image {img_path} to {img.size}")
                 except Exception as e:
                     print(f"Error opening image {img_path}: {e}")
-                    continue
+                    # 
+                    return False
+    return True
+        
+
+data = json.load(open(sys.argv[1]))
+image_folder = Path(sys.argv[2])
+
+new_data = []
+for line in tqdm(data):
+    if "image_dir" not in line:
+        new_data.append(line)
+        continue
+    image_dir = line["image_dir"]
+    if not is_image_valid(line):
+        continue
+    new_data.append(line)
+
+print('keep data:', len(new_data))
+output_path = sys.argv[1].replace(".json", "_valid.json")
+json.dump(new_data, open(output_path, "w"), indent=2, ensure_ascii=False)
+    
         
