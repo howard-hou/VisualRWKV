@@ -344,7 +344,7 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_dir)
+        self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
         self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
 
@@ -362,8 +362,6 @@ class VisualRWKV(pl.LightningModule):
 
     def freeze_vit(self):
         self.vit.requires_grad_(False)
-        self.vit.sam_featurizer.down_sampler.requires_grad_(True)
-        self.vit.sam_featurizer.down_sampler2.requires_grad_(True)
     
     def freeze_rwkv(self, num_layers_to_freeze):
         # freeze all layers including embedding and lm head
@@ -413,7 +411,6 @@ class VisualRWKV(pl.LightningModule):
 
     def bidirectional_forward(self, x, x_emb=None):
         args = self.args
-
         if args.dropout > 0:
             x = self.rwkv.drop0(x)
 
@@ -431,9 +428,7 @@ class VisualRWKV(pl.LightningModule):
                 x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
 
         x = self.rwkv.ln_out(x)
-
         x = self.rwkv.head(x)
-
         return x
     
     def training_step(self, batch, batch_idx):
@@ -462,29 +457,8 @@ class VisualRWKV(pl.LightningModule):
     
     def encode_images(self, images):
         image_features = self.vit(images)
-        image_features = self.grid_pooling(image_features)
         return self.proj(image_features)
     
-    def grid_pooling(self, image_features):
-        cls_features = image_features[:, 0:1, :]
-        image_features = image_features[:, 1:, :] #drop cls token
-        if self.args.grid_size == -1: # no grid pooling
-            return torch.cat((image_features, cls_features), dim=1)
-        if self.args.grid_size == 0: # take cls token
-            return cls_features
-        if self.args.grid_size == 1: # global avg pooling
-            return torch.cat((image_features.mean(dim=1, keepdim=True), cls_features), dim=1)
-        B, L, D = image_features.shape
-        H_or_W = int(L**0.5)
-        image_features = image_features.view(B, H_or_W, H_or_W, D)
-        grid_stride = H_or_W // self.args.grid_size
-        image_features = F.avg_pool2d(image_features.permute(0, 3, 1, 2), 
-                                      padding=0,
-                                      kernel_size=grid_stride, 
-                                      stride=grid_stride)
-        image_features = image_features.permute(0, 2, 3, 1).view(B, -1, D)
-        return torch.cat((image_features, cls_features), dim=1)
-
     def get_max_image_token_indice(self, samples):
         max_image_token_indice = 0
         for cur_input_ids in samples["input_ids"]:
@@ -513,13 +487,13 @@ class VisualRWKV(pl.LightningModule):
         device, label_dtype = samples["labels"].device, samples["labels"].dtype
         emb_dtype = samples["images"]['dino'].dtype
         ### prepare image features
-        image_features  = self.encode_images(samples["images"]) # with cls token
+        image_features  = self.encode_images(samples["images"]) #
         ### prepare input token
         new_input_embeds = []
         new_labels = []
         max_image_token_indice = self.get_max_image_token_indice(samples)
         self.img_start = max_image_token_indice
-        self.img_end = max_image_token_indice + (image_features.shape[1] - 1) # exclude cls token
+        self.img_end = max_image_token_indice + image_features.shape[1]
         for idx, cur_input_ids in enumerate(samples["input_ids"]):
             cur_labels = samples["labels"][idx]
             cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)

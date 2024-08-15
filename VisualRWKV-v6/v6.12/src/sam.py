@@ -44,6 +44,36 @@ class LayerNorm2d(nn.Module):
         return x
 
 
+class LosslessDownSampler(nn.Module):
+    '''Downsamples the input tensor by a factor.
+       all features are preserved, but the spatial resolution is reduced.
+       每 2x2 的块（每个块包含 4 个相邻的向量）组合起来，形成一个新的通道维度.
+       translate to English:
+       Combine each 2x2 block (each block contains 4 adjacent vectors) to form a new channel dimension.
+    '''
+    def __init__(self, downsample_factor=2):
+        super(LosslessDownSampler, self).__init__()
+        self.downsample_factor = downsample_factor
+
+    def forward(self, x):
+        # x: (batch_size, channel_dim, 64, 64)
+        batch_size, channel_dim, height, width = x.size()
+        new_height = height // self.downsample_factor
+        new_width = width // self.downsample_factor
+        new_dim = channel_dim * (self.downsample_factor ** 2)
+        assert height % self.downsample_factor == 0 and width % self.downsample_factor == 0, \
+            f'Height and width must be divisible by downsample factor. Got height={height}, width={width}, downsample_factor={self.downsample_factor}'
+        # 第一步: reshape 将 tensor 转换为 (batch_size, channel_dim, 32, 2, 32, 2)
+        reshaped_tensor = x.view(batch_size, channel_dim, new_height, self.downsample_factor, new_width, self.downsample_factor)
+
+        # 第二步: 调整维度顺序，得到 (batch_size, 32, 32, channel_dim, 2, 2)
+        permuted_tensor = reshaped_tensor.permute(0, 2, 4, 1, 3, 5)
+
+        # 第三步: 将最后三个维度合并到 channel 维度，得到 (batch_size, 4 * channel_dim, 32, 32)
+        output_tensor = permuted_tensor.contiguous().view(batch_size, 32, 32, new_dim).permute(0, 3, 1, 2)
+        return output_tensor
+
+
 # This class and its supporting functions below lightly adapted from the ViTDet backbone available at: https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/vit.py # noqa
 class ImageEncoderViT(nn.Module):
     def __init__(
@@ -134,9 +164,7 @@ class ImageEncoderViT(nn.Module):
             LayerNorm2d(out_chans),
         )
         # downsample from 64x64 to 32x32
-        self.down_sampler = nn.Conv2d(out_chans, out_chans*2, kernel_size=3, stride=2, padding=1, bias=False)
-        # downsample from 32x32 to 27x27
-        self.down_sampler2 = nn.Conv2d(out_chans*2, out_chans*4, kernel_size=6, stride=1, padding=0, bias=False)
+        self.down_sampler = LosslessDownSampler(downsample_factor=2)
         self.output_dim = out_chans*4
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -148,7 +176,7 @@ class ImageEncoderViT(nn.Module):
             x = blk(x)
 
         x = self.neck(x.permute(0, 3, 1, 2))
-        return self.down_sampler2(self.down_sampler(x))
+        return self.down_sampler(x)
 
 
 class Block(nn.Module):
