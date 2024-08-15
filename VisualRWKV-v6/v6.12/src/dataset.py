@@ -216,7 +216,7 @@ class MyDataset(Dataset):
         if 'image' in sample:
             data_dict['images'] = pixel_values
         else:
-            data_dict['images'] = {"dino":torch.zeros(3, 384, 384), 
-                                   "siglip":torch.zeros(3, 384, 384),
+            data_dict['images'] = {"dino":torch.zeros(3, 448, 448), 
+                                   "siglip":torch.zeros(3, 448, 448),
                                    "sam":torch.zeros(3, 1024, 1024),}
         return data_dict
