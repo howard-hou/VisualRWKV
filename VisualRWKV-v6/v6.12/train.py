@@ -56,7 +56,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
-    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
@@ -181,7 +180,13 @@ if __name__ == "__main__":
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()
     if args.model_path:
-        msg = model.load_state_dict(torch.load(args.model_path, map_location='cpu'), strict=False)
+        raw_model = torch.load(args.model_path, map_location='cpu')
+        # use pos_embed from pretrained model
+        if "vit.dino_featurizer.pos_embed" in raw_model:
+            del raw_model["vit.dino_featurizer.pos_embed"]
+        if "vit.siglip_featurizer.pos_embed" in raw_model:
+            del raw_model["vit.siglip_featurizer.pos_embed"]
+        msg = model.load_state_dict(raw_model, strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv(args.freeze_rwkv)
