@@ -337,6 +337,25 @@ class RWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
 
 
+class MLPWithMultiheadAttentionGating(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.proj = nn.Linear(in_dim, out_dim, bias=False)
+        self.num_heads = out_dim // 64
+        self.attn = nn.MultiheadAttention(out_dim, self.num_heads)
+        self.gate = nn.Sigmoid()
+        self.proj2 = nn.Linear(out_dim, out_dim, bias=False)
+
+    def forward(self, x):
+        # x: [B, T, D]
+        x = self.proj(x)
+        attn_output, _ = self.attn(x, x, x)
+        attn_gating = self.gate(attn_output)
+        x = x * attn_gating
+        x = self.proj2(x)
+        return x
+
+
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
@@ -346,7 +365,10 @@ class VisualRWKV(pl.LightningModule):
             self.load_rwkv_from_pretrained(args.load_model)
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
-        self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
+        if args.proj_type == "linear":
+            self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
+        else:
+            self.proj = MLPWithMultiheadAttentionGating(self.vit.embed_dim, args.n_embd)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))

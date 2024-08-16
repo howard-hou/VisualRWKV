@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
     parser = Trainer.add_argparse_args(parser)
