@@ -165,6 +165,8 @@ class ImageEncoderViT(nn.Module):
         )
         # downsample from 64x64 to 32x32
         self.down_sampler = LosslessDownSampler(downsample_factor=2)
+        # option2: use nn.Conv2d to downsample from 64x64 to 32x32
+        # self.down_sampler = nn.Conv2d(out_chans, out_chans*4, kernel_size=3, stride=2, padding=1, bias=False)
         self.output_dim = out_chans*4
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
