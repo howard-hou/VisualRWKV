@@ -38,7 +38,7 @@ class SamDinoSigLIPImageTransform:
     sam_image_transform: ImageTransform
 
     def __post_init__(self) -> None:
-        self.image_size = {"dino": 384, "siglip": 384, "sam": 1024}
+        self.image_size = {"dino": 448, "siglip": 448, "sam": 1024}
 
     def __call__(self, img: Image, **kwargs: str) -> Dict[str, torch.Tensor]:
         return {"dino": self.dino_image_transform(img, **kwargs), 
