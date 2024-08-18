@@ -338,22 +338,24 @@ class RWKV(pl.LightningModule):
 
 
 class MLPWithMultiheadAttentionGating(nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, in_dim, n_embd):
         super().__init__()
-        self.proj = nn.Linear(in_dim, out_dim, bias=False)
-        self.num_heads = out_dim // 64
-        self.attn = nn.MultiheadAttention(out_dim, self.num_heads)
+        self.proj = nn.Linear(in_dim, n_embd, bias=False)
+        self.n_embd = n_embd
+        self.num_heads = n_embd // 64
+        # key, query, value projections for all heads
+        self.qkv_proj = nn.Linear(n_embd, n_embd * 3, bias=False)
+        self.attn = nn.MultiheadAttention(n_embd, self.num_heads)
         self.gate = nn.Sigmoid()
-        self.proj2 = nn.Linear(out_dim, out_dim, bias=False)
+        self.o_proj = nn.Linear(n_embd, n_embd, bias=False)
 
     def forward(self, x):
         # x: [B, T, D]
         x = self.proj(x)
-        attn_output, _ = self.attn(x, x, x)
+        q, k ,v  = self.qkv_proj(x).split(self.n_embd, dim=2)
+        attn_output, _ = self.attn(q, k, v)
         attn_gating = self.gate(attn_output)
-        x = x * attn_gating
-        x = self.proj2(x)
-        return x
+        return self.o_proj(x * attn_gating)
 
 
 class VisualRWKV(pl.LightningModule):
