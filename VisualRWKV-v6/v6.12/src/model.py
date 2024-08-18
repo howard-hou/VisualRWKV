@@ -337,6 +337,21 @@ class RWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
 
 
+class MLPWithContextGating(nn.Module):
+    def __init__(self, in_dim, n_embd):
+        super().__init__()
+        self.proj = nn.Linear(in_dim, n_embd, bias=False)
+        self.n_embd = n_embd
+        self.gate = nn.Linear(n_embd, n_embd, bias=False)
+        self.o_proj = nn.Linear(n_embd, n_embd, bias=False)
+
+    def forward(self, x):
+        # x: [B, T, D]
+        x = self.proj(x)
+        gating = torch.sigmoid(self.gate(x))
+        return self.o_proj(x * gating)
+
+
 class MLPWithMultiheadAttentionGating(nn.Module):
     def __init__(self, in_dim, n_embd):
         super().__init__()
