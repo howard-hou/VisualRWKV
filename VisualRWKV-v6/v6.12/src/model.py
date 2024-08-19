@@ -385,7 +385,7 @@ class VisualRWKV(pl.LightningModule):
         if args.proj_type == "linear":
             self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
         else:
-            self.proj = MLPWithMultiheadAttentionGating(self.vit.embed_dim, args.n_embd)
+            self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
