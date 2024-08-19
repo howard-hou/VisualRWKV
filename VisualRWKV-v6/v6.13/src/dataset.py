@@ -205,7 +205,7 @@ class MyDataset(Dataset):
             pixel_values = {}
             for key in whole_image_pixel_values:
                 pixel_values[key] = torch.stack([whole_image_pixel_values[key]] + [tile_pixel_values[i][key] for i in range(4)])
-                print(key, pixel_values[key].shape)            
+                         
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
                                                                   image_position=args.image_position)
         else:

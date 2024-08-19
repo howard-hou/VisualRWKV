@@ -531,7 +531,6 @@ class VisualRWKV(pl.LightningModule):
         sam_features = sam_features.permute(0, 2, 3, 1).reshape(B, -1, sam_features.shape[1])
         # concat global image features with local features at D dimension
         image_features = torch.cat([global_features, dino_features, siglip_features, sam_features], dim=-1)
-        print("image_features.shape", image_features.shape)
         return self.proj(image_features)
     
     def get_max_image_token_indice(self, samples):
