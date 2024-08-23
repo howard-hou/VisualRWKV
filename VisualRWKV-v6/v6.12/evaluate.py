@@ -90,12 +90,26 @@ def get_input_text_mmbench(line, lang='en'):
         question = question + '\n' + "Answer with the option's letter from the given choices directly."
     return question
     
+def detail_mode(line):
+    if "Answer the question using a single word or phrase." in line["text"]:
+        text = line["text"].replace("Answer the question using a single word or phrase.", "").strip()
+    text = text + "\n" + "Answer the question with detailed explanation."
+    return DEFAULT_IMAGE_TOKEN + '\n' + text
+
+def short_mode(line):
+    if "Answer the question using a single word or phrase." not in line["text"]:
+        text = line["text"].strip() + "\n" + "Answer the question using a single word or phrase."
+    return DEFAULT_IMAGE_TOKEN + '\n' + text
 
 def get_input_text(line, dataset_name):
     if dataset_name == "mmbench":
         return get_input_text_mmbench(line)
     elif dataset_name == "mmbench_cn":
         return get_input_text_mmbench(line, lang='cn')
+    elif dataset_name == "detail_mode":
+        return detail_mode(line)
+    elif dataset_name == "short_mode":
+        return short_mode(line)
     else:
         if "text" in line:
             return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
