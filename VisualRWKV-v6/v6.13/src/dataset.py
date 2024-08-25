@@ -197,11 +197,10 @@ class MyDataset(Dataset):
 
         is_image_available = True
         if 'image' in sample:
-            image_file = sample['image']
-            image_folder = args.image_folder
+            image_file = os.path.join(args.image_folder, sample['image'])
             # try and except to handle the case where the image is not found or not readable
             try:
-                image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+                image = Image.open(image_file).convert('RGB')
                 tiles = split_image_into_tiles(image, 2) # split the image into 4 tiles
                 whole_image_pixel_values = args.image_processor(image)
                 tile_pixel_values = [args.image_processor(tile) for tile in tiles]

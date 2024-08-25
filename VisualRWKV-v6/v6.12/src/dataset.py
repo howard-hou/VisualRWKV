@@ -197,11 +197,10 @@ class MyDataset(Dataset):
 
         is_image_available = True
         if 'image' in sample:
-            image_file = sample['image']
-            image_folder = args.image_folder
+            image_file = os.path.join(args.image_folder, sample['image'])
             # try and except to handle the case where the image is not found or not readable
             try:
-                image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+                image = Image.open(image_file).convert('RGB')
                 pixel_values = args.image_processor(image)
             except:
                 rank_zero_info(f"Image {image_file} not available or not readable, use zero tensor instead.")
