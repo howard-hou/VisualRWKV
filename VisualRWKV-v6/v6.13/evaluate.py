@@ -13,7 +13,7 @@ from tqdm import tqdm
 from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation, gpt4v_crop, load_image_from_base64
+from src.utils import Conversation, split_image_into_tiles, load_image_from_base64
 from src.config import VISION_TOWER_CHECKPOINT_NAMES
 
 
@@ -90,12 +90,26 @@ def get_input_text_mmbench(line, lang='en'):
         question = question + '\n' + "Answer with the option's letter from the given choices directly."
     return question
     
+def detail_mode(line):
+    if "Answer the question using a single word or phrase." in line["text"]:
+        text = line["text"].replace("Answer the question using a single word or phrase.", "").strip()
+    text = text + "\n" + "Answer the question with detailed explanation."
+    return DEFAULT_IMAGE_TOKEN + '\n' + text
+
+def short_mode(line):
+    if "Answer the question using a single word or phrase." not in line["text"]:
+        text = line["text"].strip() + "\n" + "Answer the question using a single word or phrase."
+    return DEFAULT_IMAGE_TOKEN + '\n' + text
 
 def get_input_text(line, dataset_name):
     if dataset_name == "mmbench":
         return get_input_text_mmbench(line)
     elif dataset_name == "mmbench_cn":
         return get_input_text_mmbench(line, lang='cn')
+    elif dataset_name == "detail_mode":
+        return detail_mode(line)
+    elif dataset_name == "short_mode":
+        return short_mode(line)
     else:
         if "text" in line:
             return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
@@ -105,17 +119,21 @@ def get_input_text(line, dataset_name):
             raise ValueError("Cannot find input text in line: {}".format(line))
     
 def get_input_image_dict(line, image_folder, image_processor):
+    '''
+    return a dictionary of image tensors of shape [5, 3, H, W]
+    '''
     if "image" in line:
-        image_file = line["image"]
-        if image_folder is not None:
-            image = Image.open(image_folder / image_file).convert("RGB")
-        else: # image is base64 encoded
-            image = load_image_from_base64(image_file)
-        image_dict = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
+        image = Image.open(image_folder / line["image"]).convert("RGB")
+        tiles = split_image_into_tiles(image, 2) # split the image into 4 tiles
+        whole_image_pixel_values = image_processor(image)
+        tile_pixel_values = [image_processor(tile) for tile in tiles]
+        image_dict = {}
+        for key in whole_image_pixel_values:
+            image_dict[key] = torch.stack([whole_image_pixel_values[key]] + [tile_pixel_values[i][key] for i in range(4)])
     else:
         image_dict = {}
         for k in image_processor.image_size: # initialize with dummy image
-            image_dict[k] = torch.zeros(3, image_processor.image_size[k], image_processor.image_size[k])
+            image_dict[k] = torch.zeros(5, 3, image_processor.image_size[k], image_processor.image_size[k])
     return image_dict
 
 def eval_model(args):
@@ -165,6 +183,12 @@ def eval_model(args):
         
         input_ids = data_dict['input_ids'].unsqueeze(0).to(args.device)
         cur_prompt = data_dict['input_text']
+        if i == 0:
+            print("input_ids.shape: ", input_ids.shape)
+            print("input_ids: ", input_ids)
+            print("cur_prompt: ", cur_prompt)
+            for k in image_dict:
+                print(f"image_dict[{k}].shape: {image_dict[k].shape}")
 
         with torch.inference_mode():
             output_ids, output_logits, output_probs = model.generate(
@@ -214,7 +238,7 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
-    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
+    parser.add_argument("--grid_size", type=int, default=-1) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     # arguments for evaluation

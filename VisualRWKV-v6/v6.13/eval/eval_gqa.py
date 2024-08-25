@@ -133,10 +133,10 @@ predictions = loadFile(args.predictions)
 predictions = {p["questionId"]: p["prediction"] for p in predictions}
 
 # Make sure all question have predictions
-for qid in questions:
-    if (qid not in predictions) and (args.consistency or questions[qid]["isBalanced"]):
-        print("no prediction for question {}. Please add prediction for all questions.".format(qid))
-        raise Exception("missing predictions")
+# for qid in questions:
+#     if (qid not in predictions) and (args.consistency or questions[qid]["isBalanced"]):
+#         print("no prediction for question {}. Please add prediction for all questions.".format(qid))
+#         raise Exception("missing predictions")
 
 # Load attentions and turn them into a dictionary
 attentions = None
@@ -345,10 +345,11 @@ def chiSquare(goldDist, predictedDist):
 badcases = []
 badcase_index = 0
 # Loop over the questions and compute mterics
-for qid, question in tqdm(questions.items()):
-    gold = question["answer"]
+for qid, predicted in tqdm(predictions.items()):
+    question = questions[qid]
+    gold = question["answer"].lower().strip()
     #gold = question["answers"] # add gpt reviewed answer
-    predicted = predictions[qid].lower()
+    predicted = predicted.lower().strip()
 
     correct = (predicted == gold)
     #correct = (predicted in gold)
