@@ -195,16 +195,22 @@ class MyDataset(Dataset):
         else: # when step >= self.magic_prime, means the second epoch
             sample = self.list_data_dict_reverse[sample_idx]
 
+        is_image_available = True
         if 'image' in sample:
             image_file = sample['image']
             image_folder = args.image_folder
-            image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
-            tiles = split_image_into_tiles(image, 2) # split the image into 4 tiles
-            whole_image_pixel_values = args.image_processor(image)
-            tile_pixel_values = [args.image_processor(tile) for tile in tiles]
-            pixel_values = {}
-            for key in whole_image_pixel_values:
-                pixel_values[key] = torch.stack([whole_image_pixel_values[key]] + [tile_pixel_values[i][key] for i in range(4)])
+            # try and except to handle the case where the image is not found or not readable
+            try:
+                image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+                tiles = split_image_into_tiles(image, 2) # split the image into 4 tiles
+                whole_image_pixel_values = args.image_processor(image)
+                tile_pixel_values = [args.image_processor(tile) for tile in tiles]
+                pixel_values = {}
+                for key in whole_image_pixel_values:
+                    pixel_values[key] = torch.stack([whole_image_pixel_values[key]] + [tile_pixel_values[i][key] for i in range(4)])
+            except:
+                rank_zero_info(f"Image {image_file} not available or not readable, use zero tensor instead.")
+                is_image_available = False
                          
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
                                                                   image_position=args.image_position)
@@ -219,7 +225,7 @@ class MyDataset(Dataset):
             pad_token_id=0)
         
         # image exist in the data
-        if 'image' in sample:
+        if 'image' in sample and is_image_available:
             data_dict['images'] = pixel_values
         else:
             data_dict['images'] = {"dino":torch.zeros(5, 3, 448, 448), 
