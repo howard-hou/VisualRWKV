@@ -130,8 +130,10 @@ class train_callback(pl.Callback):
                         return True
                     else:
                         return False
+                else:
+                    return True
             else:
-                return True
+                return False
     
         args = self.args
         to_save_dict = {}
