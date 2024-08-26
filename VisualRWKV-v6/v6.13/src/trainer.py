@@ -122,10 +122,21 @@ class train_callback(pl.Callback):
         # print(f'########## world_size {dataset.world_size} global_rank {dataset.global_rank} real_epoch {dataset.real_epoch} ##########')
 
     def on_train_epoch_end(self, trainer, pl_module):
+        def get_epoch_save_condition(args, trainer):
+            # not save first epoch, only if epoch count == 1, save it
+            if trainer.current_epoch % args.epoch_save == 0:
+                if trainer.current_epoch == 0:
+                    if args.epoch_count == 1:
+                        return True
+                    else:
+                        return False
+            else:
+                return True
+
         args = self.args
         to_save_dict = {}
         if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
-            if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
+            if (args.epoch_save > 0 and get_epoch_save_condition(args, trainer)) or (trainer.current_epoch == args.epoch_count - 1):
                 to_save_dict = pl_module.state_dict()
                 try:
                     my_save(
