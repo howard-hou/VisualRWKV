@@ -52,14 +52,15 @@ def process_image_tokens_in_conversations(
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            if image_position == "first":
-                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-            elif image_position == "middle":
-                sentence['value'] = all_human_conv + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-            elif image_position == "last":
-                sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
-            else:
-                raise ValueError(f"Unknown image_position: {image_position}, must be first, middle or last.")
+            if sentence['from'].lower() == "human":
+                if image_position == "first":
+                    sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+                elif image_position == "middle":
+                    sentence['value'] = all_human_conv + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+                elif image_position == "last":
+                    sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
+                else:
+                    raise ValueError(f"Unknown image_position: {image_position}, must be first, middle or last.")
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
