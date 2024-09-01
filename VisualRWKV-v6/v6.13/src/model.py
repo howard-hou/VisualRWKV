@@ -695,4 +695,5 @@ class VisualFeatureExtractor(pl.LightningModule):
         # save image features to np
         image_feature_file_paths = [self.image_feature_folder / f for f in image_feature_file_names]
         for f, features in zip(image_feature_file_paths, image_features):
-            np.savez(f, features=features.cpu().numpy())
+            # use float16 to save space
+            np.savez(f, features=features.cpu().numpy().astype(np.float16))
