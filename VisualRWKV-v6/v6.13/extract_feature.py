@@ -17,13 +17,11 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_dir",type=str)
 
     args = parser.parse_args()
-    # make code can run
-    os.environ["RWKV_JIT_ON"] = "1"
     ########################################################################################################
     from pathlib import Path
     from tqdm import tqdm
     from torch.utils.data import DataLoader
-    from src.model import VisualFeatureExtractor
+    from src.vision import VisualFeatureExtractor
     from src.dataset import FeatureDataset
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
