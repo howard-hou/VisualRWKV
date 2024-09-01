@@ -6,6 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 if __name__ == "__main__":
+    import os
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
@@ -16,7 +17,8 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_dir",type=str)
 
     args = parser.parse_args()
-
+    # make code can run
+    os.environ["RWKV_JIT_ON"] = "1"
     ########################################################################################################
     from pathlib import Path
     from tqdm import tqdm
