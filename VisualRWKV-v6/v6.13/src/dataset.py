@@ -232,3 +232,45 @@ class MyDataset(Dataset):
                                    "siglip":torch.zeros(5, 3, 448, 448),
                                    "sam":torch.zeros(5, 3, 1024, 1024),}
         return data_dict
+    
+
+    class FeatureDataset(Dataset):
+        def __init__(self, args):
+            self.args = args
+            self.list_data_dict = json.load(open(args.data_file, "r"))
+
+        def __len__(self):
+            return len(self.list_data_dict)
+        
+        def __getitem__(self, idx):
+            args = self.args
+            sample = self.list_data_dict[idx]
+            is_image_available = True
+            if 'image' in sample:
+                image_file = os.path.join(args.image_folder, sample['image'])
+                # try and except to handle the case where the image is not found or not readable
+                try:
+                    image = Image.open(image_file).convert('RGB')
+                    tiles = split_image_into_tiles(image, 2) # split the image into 4 tiles
+                    whole_image_pixel_values = args.image_processor(image)
+                    tile_pixel_values = [args.image_processor(tile) for tile in tiles]
+                    pixel_values = {}
+                    for key in whole_image_pixel_values:
+                        pixel_values[key] = torch.stack([whole_image_pixel_values[key]] + [tile_pixel_values[i][key] for i in range(4)])
+                except:
+                    rank_zero_info(f"Image {image_file} not available or not readable, use zero tensor instead.")
+                    is_image_available = False
+            
+            data_dict = {}
+            if 'image' in sample and is_image_available:
+                data_dict['images'] = pixel_values
+            else:
+                data_dict['images'] = {"dino":torch.zeros(5, 3, 448, 448), 
+                                       "siglip":torch.zeros(5, 3, 448, 448),
+                                       "sam":torch.zeros(5, 3, 1024, 1024),}
+            # add the image file name to the data_dict
+            if 'image' in sample:
+                data_dict['image_file'] = sample['image']
+            else:
+                data_dict['image_file'] = None
+            return data_dict

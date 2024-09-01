@@ -3,6 +3,8 @@
 ########################################################################################################
 
 import os, math, gc, importlib
+from pathlib import Path
+import numpy as np
 import torch
 # torch._C._jit_set_profiling_executor(True)
 # torch._C._jit_set_profiling_mode(True)
@@ -373,6 +375,51 @@ class MLPWithMultiheadAttentionGating(nn.Module):
         return self.o_proj(x * attn_gating)
 
 
+def fuse_image_features(dino_patches, siglip_patches, sam_patches):
+    '''
+    fuse image features from DINO, SigLIP and SAM. Special designed for VisualRWKV-UHD.
+    dino_patches: [B, N, L, D]
+    siglip_patches: [B, N, L, D]
+    sam_patches: [B, N, L, D]
+    '''
+    B, N, L, _ = dino_patches.shape
+    H_or_W = int(L**0.5) # 1024 -> 32
+    # concat global image features
+    global_features = torch.cat([dino_patches[:, 0, :, :], siglip_patches[:, 0, :, :], sam_patches[:, 0, :, :]], dim=-1)
+    # adaptive_avg_pool2d over all tiles
+    output_size = H_or_W // 2 # 32 -> 16
+    dino_tiles, siglip_tiles, sam_tiles = [], [], []
+    for i in range(1, N):
+        one_dino = dino_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
+        one_siglip = siglip_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
+        one_sam = sam_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
+        # adaptive_avg_pool2d
+        one_dino = F.adaptive_avg_pool2d(one_dino, output_size)
+        one_siglip = F.adaptive_avg_pool2d(one_siglip, output_size)
+        one_sam = F.adaptive_avg_pool2d(one_sam, output_size)
+        dino_tiles.append(one_dino)
+        siglip_tiles.append(one_siglip)
+        sam_tiles.append(one_sam)
+    # 先拼接水平 (W 方向上) 部分
+    dino_top = torch.cat([dino_tiles[0], dino_tiles[1]], dim=3) # 拼接左上和右上部分
+    siglip_top = torch.cat([siglip_tiles[0], siglip_tiles[1]], dim=3)
+    sam_top = torch.cat([sam_tiles[0], sam_tiles[1]], dim=3)
+    dino_bottom = torch.cat([dino_tiles[2], dino_tiles[3]], dim=3) # 拼接左下和右下部分
+    siglip_bottom = torch.cat([siglip_tiles[2], siglip_tiles[3]], dim=3)
+    sam_bottom = torch.cat([sam_tiles[2], sam_tiles[3]], dim=3)
+    # 再拼接垂直 (H 方向上) 部分
+    dino_features = torch.cat([dino_top, dino_bottom], dim=2)
+    siglip_features = torch.cat([siglip_top, siglip_bottom], dim=2)
+    sam_features = torch.cat([sam_top, sam_bottom], dim=2)
+    # reshape B, C, H, W to B, H*W, C
+    dino_features = dino_features.permute(0, 2, 3, 1).reshape(B, -1, dino_features.shape[1])
+    siglip_features = siglip_features.permute(0, 2, 3, 1).reshape(B, -1, siglip_features.shape[1])
+    sam_features = sam_features.permute(0, 2, 3, 1).reshape(B, -1, sam_features.shape[1])
+    # concat global image features with local features at D dimension
+    image_features = torch.cat([global_features, dino_features, siglip_features, sam_features], dim=-1)
+    return image_features
+
+
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
@@ -496,41 +543,7 @@ class VisualRWKV(pl.LightningModule):
     
     def encode_images(self, images):
         dino_patches, siglip_patches, sam_patches = self.vit(images)
-        B, N, L, _ = dino_patches.shape
-        H_or_W = int(L**0.5) # 1024 -> 32
-        # concat global image features
-        global_features = torch.cat([dino_patches[:, 0, :, :], siglip_patches[:, 0, :, :], sam_patches[:, 0, :, :]], dim=-1)
-        # adaptive_avg_pool2d over all tiles
-        output_size = H_or_W // 2 # 32 -> 16
-        dino_tiles, siglip_tiles, sam_tiles = [], [], []
-        for i in range(1, N):
-            one_dino = dino_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
-            one_siglip = siglip_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
-            one_sam = sam_patches[:, i, :, :].view(B, H_or_W, H_or_W, -1).permute(0, 3, 1, 2)
-            # adaptive_avg_pool2d
-            one_dino = F.adaptive_avg_pool2d(one_dino, output_size)
-            one_siglip = F.adaptive_avg_pool2d(one_siglip, output_size)
-            one_sam = F.adaptive_avg_pool2d(one_sam, output_size)
-            dino_tiles.append(one_dino)
-            siglip_tiles.append(one_siglip)
-            sam_tiles.append(one_sam)
-        # 先拼接水平 (W 方向上) 部分
-        dino_top = torch.cat([dino_tiles[0], dino_tiles[1]], dim=3) # 拼接左上和右上部分
-        siglip_top = torch.cat([siglip_tiles[0], siglip_tiles[1]], dim=3)
-        sam_top = torch.cat([sam_tiles[0], sam_tiles[1]], dim=3)
-        dino_bottom = torch.cat([dino_tiles[2], dino_tiles[3]], dim=3) # 拼接左下和右下部分
-        siglip_bottom = torch.cat([siglip_tiles[2], siglip_tiles[3]], dim=3)
-        sam_bottom = torch.cat([sam_tiles[2], sam_tiles[3]], dim=3)
-        # 再拼接垂直 (H 方向上) 部分
-        dino_features = torch.cat([dino_top, dino_bottom], dim=2)
-        siglip_features = torch.cat([siglip_top, siglip_bottom], dim=2)
-        sam_features = torch.cat([sam_top, sam_bottom], dim=2)
-        # reshape B, C, H, W to B, H*W, C
-        dino_features = dino_features.permute(0, 2, 3, 1).reshape(B, -1, dino_features.shape[1])
-        siglip_features = siglip_features.permute(0, 2, 3, 1).reshape(B, -1, siglip_features.shape[1])
-        sam_features = sam_features.permute(0, 2, 3, 1).reshape(B, -1, sam_features.shape[1])
-        # concat global image features with local features at D dimension
-        image_features = torch.cat([global_features, dino_features, siglip_features, sam_features], dim=-1)
+        image_features = fuse_image_features(dino_patches, siglip_patches, sam_patches)
         return self.proj(image_features)
     
     def get_max_image_token_indice(self, samples):
@@ -653,3 +666,32 @@ class VisualRWKV(pl.LightningModule):
             x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
             x = x[:, -self.args.ctx_len:, :] # truncate
         return generated_tokens, generated_token_logits, generated_token_probs
+
+
+class VisualFeatureExtractor(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.image_feature_folder = Path(args.image_feature_folder)
+        self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
+
+    def encode_images(self, images):
+        '''
+        encode image to get image features before projection.
+        '''
+        dino_patches, siglip_patches, sam_patches = self.vit(images)
+        image_features = fuse_image_features(dino_patches, siglip_patches, sam_patches)
+        return image_features
+    
+    @torch.no_grad()
+    def forward(self, samples):
+        image_features = self.encode_images(samples['images'])
+        return image_features
+    
+    def predict_step(self, batch):
+        image_features = self(batch)
+        # replace all image suffix with .npz
+        image_feature_file_names = [f.with_suffix('.npz') for f in batch['image_file']]
+        # save image features to np
+        image_feature_file_paths = [self.image_feature_folder / f for f in image_feature_file_names]
+        for f, features in zip(image_feature_file_paths, image_features):
+            np.savez(f, features=features.cpu().numpy())
