@@ -673,6 +673,7 @@ class VisualFeatureExtractor(pl.LightningModule):
         super().__init__()
         self.image_feature_folder = Path(args.image_feature_folder)
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
+        self.vit.requires_grad_(False)
 
     def encode_images(self, images):
         '''
@@ -682,7 +683,7 @@ class VisualFeatureExtractor(pl.LightningModule):
         image_features = fuse_image_features(dino_patches, siglip_patches, sam_patches)
         return image_features
     
-    @torch.no_grad()
+    @torch.inference_mode()
     def forward(self, samples):
         image_features = self.encode_images(samples['images'])
         return image_features
