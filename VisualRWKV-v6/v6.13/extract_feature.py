@@ -11,8 +11,8 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--data_file", default="", type=str)
-    parser.add_argument("--micro_bsz", default=8, type=int)
-    parser.add_argument("--image_folder", type=str, default="images")
+    parser.add_argument("--micro_bsz", default=1, type=int)
+    parser.add_argument("--image_folder", type=str)
     parser.add_argument("--image_feature_folder", type=str)
     parser.add_argument("--vision_tower_dir",type=str)
 
