@@ -19,6 +19,7 @@ if __name__ == "__main__":
 
     ########################################################################################################
     from pathlib import Path
+    from tqdm import tqdm
     from torch.utils.data import DataLoader
     from src.model import VisualFeatureExtractor
     from src.dataset import FeatureDataset
@@ -30,7 +31,7 @@ if __name__ == "__main__":
     train_data = FeatureDataset(args)
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, 
-                             persistent_workers=False, drop_last=True)
+                             persistent_workers=False, drop_last=False)
     # extract feature, save to disk
-    for batch in data_loader:
+    for batch in tqdm(data_loader, desc="Extracting feature"):
         model.predict_step(batch)
