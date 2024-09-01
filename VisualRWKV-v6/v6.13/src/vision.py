@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict,  Optional, Protocol, Tuple, Union
 import timm
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import pytorch_lightning as pl
 from PIL import Image
@@ -244,9 +245,12 @@ class VisualFeatureExtractor(pl.LightningModule):
     def predict_step(self, batch):
         image_features = self(batch)
         # replace all image suffix with .npz
-        image_feature_file_names = [f.with_suffix('.npz') for f in batch['image_file']]
+        image_feature_file_names = [Path(f).with_suffix('.npz') for f in batch['image_file']]
         # save image features to np
         image_feature_file_paths = [self.image_feature_folder / f for f in image_feature_file_names]
         for f, features in zip(image_feature_file_paths, image_features):
+            # make parent directory
+            f.parent.mkdir(parents=True, exist_ok=True)
             # use float16 to save space
-            np.savez(f, features=features.cpu().numpy().astype(np.float16))
+            features_fp16 = features.float().cpu().numpy().astype(np.float16)
+            np.savez(f, features=features_fp16)

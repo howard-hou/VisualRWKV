@@ -6,7 +6,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 if __name__ == "__main__":
-    import os
+    import torch
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
@@ -17,6 +17,9 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_dir",type=str)
 
     args = parser.parse_args()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        logging.warning("CUDA is not available, using CPU... This will be very slow.")
     ########################################################################################################
     from pathlib import Path
     from tqdm import tqdm
@@ -25,7 +28,7 @@ if __name__ == "__main__":
     from src.dataset import FeatureDataset
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
-    model = VisualFeatureExtractor(args)
+    model = VisualFeatureExtractor(args).bfloat16().to(device)
     args.image_processor = model.vit.get_image_transform()
 
     train_data = FeatureDataset(args)
@@ -36,4 +39,7 @@ if __name__ == "__main__":
     image_feature_folder.mkdir(exist_ok=True, parents=True)
     # extract feature, save to disk
     for batch in tqdm(data_loader, desc="Extracting feature"):
+        # send batch image to device
+        for key in batch['images']:
+            batch['images'][key] = batch['images'][key].bfloat16().to(device)
         model.predict_step(batch)
