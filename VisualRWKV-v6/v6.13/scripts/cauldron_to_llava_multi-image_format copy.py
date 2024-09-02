@@ -4,6 +4,9 @@ from pathlib import Path
 import json
 from tqdm import tqdm
 
+def calc_image_width_to_height_ratio(image):
+    return image.width / image.height
+
 input_path = Path(sys.argv[1])
 output_dir = Path(sys.argv[2])
 output_dir.mkdir(exist_ok=True)
@@ -24,7 +27,9 @@ for line_id, sample in enumerate(tqdm(ds)):
         img_name = f"{ds_name}_{line_id}_{img_id}.jpg"
         img_path = image_output / img_name
         image = image.convert("RGB")
-        image.save(img_path)
+        print('image size:', image.size)
+        print('width to height ratio:', calc_image_width_to_height_ratio(image))
+        #image.save(img_path)
         img_path_list.append(img_name)
     convs = []
     image_prifix = "\n".join(len(img_path_list) * ["<image>"])
