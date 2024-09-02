@@ -6,6 +6,8 @@ from typing import List, Dict
 from PIL import Image
 from io import BytesIO
 import base64
+# possible image configurations: (1:2), (2:1), (1:1), (1:3), (3:1)
+POSSIBLE_RESOLUTIONS = [(448, 896), (896, 448), (896, 896), (448, 1344), (1344, 448)]
 
 time_slot = {}
 time_ref = time.time_ns()
@@ -55,6 +57,64 @@ def split_image_into_tiles(image, n, m):
             y = i * tile_height
             tiles.append(image.crop((x, y, x + tile_width, y + tile_height)))
     return tiles
+
+
+def select_best_resolution(original_size, possible_resolutions):
+    """
+    Selects the best resolution from a list of possible resolutions based on the original size.
+
+    Args:
+        original_size (tuple): The original size of the image in the format (width, height).
+        possible_resolutions (list): A list of possible resolutions in the format [(width1, height1), (width2, height2), ...].
+
+    Returns:
+        tuple: The best fit resolution in the format (width, height).
+    """
+    original_width, original_height = original_size
+    best_fit = None
+    min_wasted_resolution = float('inf')
+
+    for width, height in possible_resolutions:
+        scale = min(width / original_width, height / original_height)
+        downscaled_width, downscaled_height = int(original_width * scale), int(original_height * scale)
+        effective_resolution = downscaled_width * downscaled_height
+        wasted_resolution = abs((width * height) - effective_resolution)
+
+        if wasted_resolution < min_wasted_resolution:
+            min_wasted_resolution = wasted_resolution
+            best_fit = (width, height)
+
+    return best_fit
+
+
+def single_image_to_multi_image_strategy(image, best_resolution):
+    """
+    Splits a single image into n x m tiles and returns a list of images.
+
+    Args:
+        image (PIL.Image): The image to be split.
+        n (int): The number of rows.
+        m (int): The number of columns.
+
+    Returns:
+        list: A list of PIL.Image objects.
+    """
+    if best_resolution == (896, 896):
+        image_area = image.size[0] * image.size[1]
+        if image_area <= (896 * 896):
+            return [image]
+        else: # large image needs to be split
+            n, m = 2, 2
+    if best_resolution == (448, 896):
+        n, m = 2, 1
+    if best_resolution == (896, 448):
+        n, m = 1, 2
+    if best_resolution == (448, 1344):
+        n, m = 3, 1
+    if best_resolution == (1344, 448):
+        n, m = 1, 3
+    tiles = split_image_into_tiles(image, n, m)
+    return [image] + tiles
 
 
 @dataclasses.dataclass

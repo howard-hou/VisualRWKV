@@ -10,10 +10,11 @@ import argparse
 import torch
 from pathlib import Path
 from tqdm import tqdm
+from collections import defaultdict
 from src.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation, gpt4v_crop, load_image_from_base64
+from src.utils import Conversation, select_best_resolution, POSSIBLE_RESOLUTIONS, single_image_to_multi_image_strategy
 from src.config import VISION_TOWER_CHECKPOINT_NAMES
 
 
@@ -64,73 +65,31 @@ def get_question_id(line):
         raise ValueError("Cannot find question id in line: {}".format(line))
 
 
-def get_options(line, options):
-    parsed_options = []
-    for option in options:
-        option_value = line[option]
-        if is_none(option_value):
-            break
-        parsed_options.append(option_value)
-    return parsed_options
-
-
-def get_input_text_mmbench(line, lang='en'):
-    all_options = ['A', 'B', 'C', 'D']
-    options = get_options(line, all_options)
-    question = line['question']
-    hint = line['hint']
-    if not is_none(hint):
-        question = hint + '\n' + question
-    for option_char, option in zip(all_options[:len(options)], options):
-        question = question + '\n' + option_char + '. ' + option
-    question = DEFAULT_IMAGE_TOKEN + '\n' + question
-    if lang == 'cn':
-        question = question + '\n' + "请直接回答选项字母。"
-    else:
-        question = question + '\n' + "Answer with the option's letter from the given choices directly."
-    return question
+def get_input_text(line, num_images):
+    # remove DEFAULT_IMAGE_TOKEN
+    input_text = line["text"].replace(DEFAULT_IMAGE_TOKEN, "").strip()
+    # add <image> tokens
+    image_prifix = "\n".join(num_images * [DEFAULT_IMAGE_TOKEN])
+    input_text = image_prifix + "\n" + input_text
+    return input_text
     
-def detail_mode(line):
-    if "Answer the question using a single word or phrase." in line["text"]:
-        text = line["text"].replace("Answer the question using a single word or phrase.", "").strip()
-    text = text + "\n" + "Answer the question with detailed explanation."
-    return DEFAULT_IMAGE_TOKEN + '\n' + text
 
-def short_mode(line):
-    if "Answer the question using a single word or phrase." not in line["text"]:
-        text = line["text"].strip() + "\n" + "Answer the question using a single word or phrase."
-    return DEFAULT_IMAGE_TOKEN + '\n' + text
-
-def get_input_text(line, dataset_name):
-    if dataset_name == "mmbench":
-        return get_input_text_mmbench(line)
-    elif dataset_name == "mmbench_cn":
-        return get_input_text_mmbench(line, lang='cn')
-    elif dataset_name == "detail_mode":
-        return detail_mode(line)
-    elif dataset_name == "short_mode":
-        return short_mode(line)
-    else:
-        if "text" in line:
-            return DEFAULT_IMAGE_TOKEN + '\n' + line["text"]
-        elif "conversations" in line:
-            return line["conversations"][0]["value"]
-        else:
-            raise ValueError("Cannot find input text in line: {}".format(line))
-    
 def get_input_image_dict(line, image_folder, image_processor):
+    image_dict = {}
     if "image" in line:
-        image_file = line["image"]
-        if image_folder is not None:
-            image = Image.open(image_folder / image_file).convert("RGB")
-        else: # image is base64 encoded
-            image = load_image_from_base64(image_file)
-        image_dict = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
-    else:
-        image_dict = {}
-        for k in image_processor.image_size: # initialize with dummy image
-            image_dict[k] = torch.zeros(3, image_processor.image_size[k], image_processor.image_size[k])
+        image = Image.open(image_folder /  line["image"]).convert("RGB")
+        best_resolution = select_best_resolution(image.size, POSSIBLE_RESOLUTIONS)
+        image_list = single_image_to_multi_image_strategy(image, best_resolution)
+        pixel_values = defaultdict(list)
+        for image in image_list:
+            pixel_value = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
+            for k in pixel_value:
+                pixel_values[k].append(pixel_value[k])
+        # merge by key
+        for key in pixel_values:
+            image_dict[key] = torch.stack(pixel_values[key], dim=0)
     return image_dict
+
 
 def eval_model(args):
     from src.model import VisualRWKV
@@ -156,18 +115,20 @@ def eval_model(args):
     update_every = len(questions) // 100
     for i, line in enumerate(questions):
         idx = get_question_id(line)
-        input_text = get_input_text(line, dataset_name=args.dataset_name)
+        #
+        image_dict = get_input_image_dict(line, image_folder, image_processor)
+        for k in image_dict:
+            image_dict[k] = image_dict[k].bfloat16().to(args.device)
+            num_images = image_dict[k].shape[0]
+            #print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+        
+        input_text = get_input_text(line, num_images=num_images)
 
         conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
         conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
-        conversations = process_image_tokens_in_conversations(conv.conversations, image_position=args.image_position)
-
-        image_dict = get_input_image_dict(line, image_folder, image_processor)
-        for k in image_dict:
-            image_dict[k] = image_dict[k].unsqueeze(0).bfloat16().to(args.device)
-            #print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+        conversations = process_image_tokens_in_conversations(conv.conversations)
 
         data_dict = preprocess(
             conversations,
@@ -249,7 +210,6 @@ if __name__ == "__main__":
     parser.add_argument("--chunk_idx", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dataset_name", type=str, default="default")
-    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
