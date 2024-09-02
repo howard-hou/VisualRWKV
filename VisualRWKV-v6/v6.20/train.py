@@ -172,7 +172,7 @@ if __name__ == "__main__":
     ########################################################################################################
 
     from src.trainer import train_callback
-    from src.dataset import MyDataset
+    from src.dataset import MyDataset, multi_image_collate_fn
     from src.rwkv_tokenizer import TRIE_TOKENIZER
     from src.model import VisualRWKV
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
@@ -217,7 +217,8 @@ if __name__ == "__main__":
         rank_zero_info('deepspeed config:', trainer.strategy.config)
 
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
-    data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, 
+    data_loader = DataLoader(train_data, collate_fn=multi_image_collate_fn,
+                             shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, 
                              persistent_workers=False, drop_last=True)
 
     trainer.fit(model, data_loader)

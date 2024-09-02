@@ -16,10 +16,22 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Constants
 IGNORE_INDEX = -100
-IMAGE_TOKEN_INDEX = -200
+IMAGE_TOKEN_INDEX = 65535 # shift from -200 to 65535
 DEFAULT_IMAGE_TOKEN = "<image>"
 STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
+
+
+def multi_image_collate_fn(batch):
+    input_text = [x['input_text'] for x in batch]
+    input_ids = torch.stack([x['input_ids'] for x in batch])
+    labels = torch.stack([x['labels'] for x in batch])
+    # concatenate images
+    all_dino = torch.cat([x['images']['dino'] for x in batch if 'images' in x], dim=0)
+    all_sam = torch.cat([x['images']['sam'] for x in batch if 'images' in x], dim=0)
+    all_siglip = torch.cat([x['images']['siglip'] for x in batch if 'images' in x], dim=0)
+    images = {"dino": all_dino, "sam": all_sam, "siglip": all_siglip}
+    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images)
 
 
 def truncate_conversations(conversations: Sequence[Dict], max_images: int) -> Sequence[Dict]:
@@ -210,8 +222,9 @@ class MyDataset(Dataset):
                     for key in pixel_value:
                         pixel_values[key].append(pixel_value[key])
                 # merge by key
+                merged_pixel_values = {}
                 for key in pixel_values:
-                    pixel_values[key] = torch.stack(pixel_values[key], dim=0)
+                    merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
             except:
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
@@ -232,9 +245,11 @@ class MyDataset(Dataset):
         
         # image exist in the data
         if 'image_dir' in sample and is_image_available:
-            data_dict['images'] = pixel_values
+            data_dict['images'] = merged_pixel_values
         else:
-            data_dict['images'] = {"dino":torch.zeros(3, 448, 448), 
-                                   "siglip":torch.zeros(3, 448, 448),
-                                   "sam":torch.zeros(3, 1024, 1024),}
+            if 'image_dir' in sample and not is_image_available:
+                N = len(image_paths)
+                data_dict['images'] = {"dino":torch.zeros(N, 3, 448, 448), 
+                                    "siglip":torch.zeros(N, 3, 448, 448),
+                                    "sam":torch.zeros(N, 3, 1024, 1024),}
         return data_dict

@@ -460,6 +460,8 @@ class VisualRWKV(pl.LightningModule):
         return self.proj(image_features)
    
     def preparing_embedding(self, samples):
+        if "images" not in samples:
+            return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
         B_IMG, L_IMG, D_IMG = image_features.shape
@@ -471,7 +473,6 @@ class VisualRWKV(pl.LightningModule):
         input_ids = samples["input_ids"].view(B * L)
         selected = (input_ids == IMAGE_TOKEN_INDEX)
         selected_sum = selected.sum()
-        assert selected_sum != 0, "No image token found in the input"
         if selected_sum != B_IMG*L_IMG:
             # truncate the input to the first image token
             image_features = image_features[:selected_sum]
