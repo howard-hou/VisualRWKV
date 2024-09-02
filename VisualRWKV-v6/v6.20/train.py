@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
-    parser.add_argument("--image_position", default='first', type=str)  # 'first' or 'last' or ''middle
+    parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 

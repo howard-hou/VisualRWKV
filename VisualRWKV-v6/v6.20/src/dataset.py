@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import Dataset
 from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
+from collections import defaultdict
+from pathlib import Path
 from .utils import largest_3n_plus_2_prime
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -20,47 +22,39 @@ STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
 
 
-def get_all_human_conversation(conversations: Sequence[Dict]) -> str:
+def truncate_conversations(conversations: Sequence[Dict], max_images: int) -> Sequence[Dict]:
     """
-    Get all human conversation from a list of conversations.
+    truncate conversations to max_images, from the beginning
     """
-    human_conv_list = []
-    for sentence in conversations:
-        if sentence["from"].lower() == "human":
-            if DEFAULT_IMAGE_TOKEN in sentence['value']:
-                human_conv = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
-                human_conv = human_conv.replace("Answer the question using a single word or phrase.", '').strip()
-                human_conv = re.sub(r"\n(\s*\n)+", '\n', human_conv)
-                human_conv_list.append(human_conv)
+    # conv pairs
+    num_images = 0
+    conversations_truncated = []
+    for i in range(0, len(conversations), 2):
+        if DEFAULT_IMAGE_TOKEN in conversations[i]['value']:
+            if num_images < max_images:
+                conversations_truncated.append(conversations[i])
+                conversations_truncated.append(conversations[i+1])
+                num_images += 1
             else:
-                human_conv_list.append(sentence['value'].strip())
-    return "\n".join(human_conv_list)
+                break
+    return conversations_truncated
 
 
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
-    image_position: str = "first", # "first", "middle" or "last"
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
     image first, then text
     replace \n\n with \n
     """
-    if image_position == 'middle':
-        all_human_conv = get_all_human_conversation(conversations)
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
             if sentence['from'].lower() == "human":
-                if image_position == "first":
-                    sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-                elif image_position == "middle":
-                    sentence['value'] = all_human_conv + '\n' + DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-                elif image_position == "last":
-                    sentence['value'] = sentence['value'] + '\n' + DEFAULT_IMAGE_TOKEN
-                else:
-                    raise ValueError(f"Unknown image_position: {image_position}, must be first, middle or last.")
+                # always put image token at the beginning
+                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
@@ -99,15 +93,15 @@ def _add_speaker_and_signal(conversations):
     return conversations
 
 
-def tokenize_with_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX):
+def tokenize_with_image_token(prompt, tokenizer, num_token_per_image, image_token_index=IMAGE_TOKEN_INDEX):
     prompt_chunks = [tokenizer.encode(chunk) for chunk in prompt.split(DEFAULT_IMAGE_TOKEN)]
 
-    input_ids = []
-    for chunk in prompt_chunks:
+    input_ids = prompt_chunks[0]
+    for chunk in prompt_chunks[1:]:
+        input_ids.extend([image_token_index]*num_token_per_image)
         input_ids.extend(chunk)
-        input_ids.append(image_token_index)
 
-    return input_ids[:-1] # remove last image token
+    return input_ids
 
 
 def mask_targets(targets, tokenized_lens, speakers):
@@ -137,7 +131,7 @@ def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
     return input_ids, targets
 
 
-def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_pad_to_max_length=True):
+def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image, pad_token_id=0, do_pad_to_max_length=True):
     """
     Given a list of sources, each is a conversation list. This transform:
     1. Add \n\n after each round;
@@ -152,7 +146,7 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_
     input_ids, tokenized_lens, speakers = [], [], []
     for conversation in conversations:
         if has_image:
-            conv_ids = tokenize_with_image_token(conversation["value"], tokenizer)
+            conv_ids = tokenize_with_image_token(conversation["value"], tokenizer, num_token_per_image)
         else:
             conv_ids = tokenizer.encode(conversation["value"])
         input_ids.extend(conv_ids)
@@ -165,7 +159,6 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, pad_token_id=0, do_
         input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
     return dict(input_ids=input_ids, labels=targets, input_text=input_text)
 
-
 class MyDataset(Dataset):
     def __init__(self, args):
         self.args = args
@@ -177,6 +170,9 @@ class MyDataset(Dataset):
         self.data_size = len(self.list_data_dict)
         self.magic_prime = largest_3n_plus_2_prime(self.data_size)
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
+        # equation: max_image = (ctx_len - task_prompt_len) // (num_image_token + num_answer_token)
+        self.max_image = (args.ctx_len - 64) // (args.num_token_per_image + 15)
+        rank_zero_info(f"Only use the first {self.max_image} images, if not enough, please increase ctx len or decrease num tokens per image.")
 
     def __len__(self):
         return self.args.epoch_steps * self.args.micro_bsz
@@ -197,29 +193,41 @@ class MyDataset(Dataset):
             sample = self.list_data_dict_reverse[sample_idx]
 
         is_image_available = True
-        if 'image' in sample:
-            image_file = os.path.join(args.image_folder, sample['image'])
+        if 'image_dir' in sample:
+            image_folder = Path(args.image_folder) / sample['image_dir']
+            image_paths = [image_folder / item['image'] for item in sample['conversations'] if 'image' in item]
+            image_paths = image_paths[:self.max_image] # only use the first max_image images
             # try and except to handle the case where the image is not found or not readable
             try:
-                image = Image.open(image_file).convert('RGB')
-                pixel_values = args.image_processor(image)
+                pixel_values = defaultdict(list)
+                for image_path in image_paths:
+                    image = Image.open(image_path).convert('RGB')
+                    pixel_value = args.image_processor(image)
+                    for key in pixel_value:
+                        pixel_values[key].append(pixel_value[key])
+                # merge by key
+                for key in pixel_values:
+                    pixel_values[key] = torch.stack(pixel_values[key], dim=0)
             except:
-                rank_zero_info(f"Image {image_file} not available or not readable, use zero tensor instead.")
+                rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
-            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]), 
-                                                                  image_position=args.image_position)
+
+            # truncate conversations to max_images
+            conversations = truncate_conversations(copy.deepcopy(sample["conversations"]), self.max_image)
+            conversations = process_image_tokens_in_conversations(conversations)
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
         data_dict = preprocess(
             conversations,
             self.tokenizer,
-            has_image=('image' in sample),
+            has_image=('image_dir' in sample),
             ctx_len=args.ctx_len,
+            num_token_per_image=args.num_token_per_image,
             pad_token_id=0)
         
         # image exist in the data
-        if 'image' in sample and is_image_available:
+        if 'image_dir' in sample and is_image_available:
             data_dict['images'] = pixel_values
         else:
             data_dict['images'] = {"dino":torch.zeros(3, 448, 448), 

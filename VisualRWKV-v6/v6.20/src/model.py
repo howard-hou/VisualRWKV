@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from pytorch_lightning.strategies import DeepSpeedStrategy
 from transformers import CLIPVisionModel
 if importlib.util.find_spec('deepspeed'):
@@ -306,9 +306,6 @@ class RWKV(pl.LightningModule):
 
     def forward(self, x):
         args = self.args
-        # B, T, D = x.size()
-        # assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
-
         if args.dropout > 0:
             x = self.drop0(x)
 
@@ -319,9 +316,7 @@ class RWKV(pl.LightningModule):
                 x = block(x)
 
         x = self.ln_out(x)
-
         x = self.head(x)
-
         return x
 
     def training_step(self, batch, batch_idx):
@@ -352,27 +347,6 @@ class MLPWithContextGating(nn.Module):
         return self.o_proj(x * gating)
 
 
-class MLPWithMultiheadAttentionGating(nn.Module):
-    def __init__(self, in_dim, n_embd):
-        super().__init__()
-        self.proj = nn.Linear(in_dim, n_embd, bias=False)
-        self.n_embd = n_embd
-        self.num_heads = n_embd // 64
-        # key, query, value projections for all heads
-        self.qkv_proj = nn.Linear(n_embd, n_embd * 3, bias=False)
-        self.attn = nn.MultiheadAttention(n_embd, self.num_heads)
-        self.gate = nn.Sigmoid()
-        self.o_proj = nn.Linear(n_embd, n_embd, bias=False)
-
-    def forward(self, x):
-        # x: [B, T, D]
-        x = self.proj(x)
-        q, k ,v  = self.qkv_proj(x).split(self.n_embd, dim=2)
-        attn_output, _ = self.attn(q, k, v)
-        attn_gating = self.gate(attn_output)
-        return self.o_proj(x * attn_gating)
-
-
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
@@ -386,6 +360,7 @@ class VisualRWKV(pl.LightningModule):
             self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
         else:
             self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+        self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -443,32 +418,10 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets, image_features = self.preparing_embedding(samples)
-        # bidirectional
-        logits = self.bidirectional_forward(x)
+        x, targets = self.preparing_embedding(samples)
+        # unidirectional forward
+        logits = self.rwkv(x)
         return logits, targets
-
-    def bidirectional_forward(self, x, x_emb=None):
-        args = self.args
-        if args.dropout > 0:
-            x = self.rwkv.drop0(x)
-
-        for i, block in enumerate(self.rwkv.blocks):
-            do_reverse = (i % 2 == 1)
-            if do_reverse: # reverse
-                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
-            
-            if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-            
-            if do_reverse: # reverse back
-                x[:, self.img_start:self.img_end, :] = x[:, self.img_start:self.img_end, :].flip(1)
-
-        x = self.rwkv.ln_out(x)
-        x = self.rwkv.head(x)
-        return x
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
@@ -493,95 +446,38 @@ class VisualRWKV(pl.LightningModule):
             all = self.all_gather(batch_parts)
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
+
+    def adaptive_pooling(self, image_features):
+        B, L, D = image_features.shape
+        H_or_W = int(L**0.5)
+        image_features = image_features.view(B, H_or_W, H_or_W, D).permute(0, 3, 1, 2)
+        image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
+        return image_features
     
     def encode_images(self, images):
         image_features = self.vit(images)
+        image_features = self.adaptive_pooling(image_features)
         return self.proj(image_features)
-    
-    def get_max_image_token_indice(self, samples):
-        max_image_token_indice = 0
-        for cur_input_ids in samples["input_ids"]:
-            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
-            if num_images == 1:
-                image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
-                max_image_token_indice = max(max_image_token_indice, image_token_indice)
-        return max_image_token_indice
-    
-    def truncate_input(self, new_input_embeds, new_labels):
-        # prioritize retaining the labels at the beginning
-        # if there are no valid labels at the beginning, retain the labels from the end
-        truncated_input_embeds = []
-        truncated_labels = []
-        for x, y in zip(new_input_embeds, new_labels):
-            valid_labels = [i for i in y[:self.args.ctx_len] if i != IGNORE_INDEX]
-            if valid_labels:
-                truncated_input_embeds.append(x[:self.args.ctx_len])
-                truncated_labels.append(y[:self.args.ctx_len])
-            else:
-                truncated_input_embeds.append(x[-self.args.ctx_len:])
-                truncated_labels.append(y[-self.args.ctx_len:])
-        return truncated_input_embeds, truncated_labels
    
-    def preparing_embedding(self, samples, truncate=True):
-        device, label_dtype = samples["labels"].device, samples["labels"].dtype
-        emb_dtype = samples["images"]['dino'].dtype
+    def preparing_embedding(self, samples):
         ### prepare image features
-        image_features  = self.encode_images(samples["images"]) #
+        image_features  = self.encode_images(samples["images"])
+        B_IMG, L_IMG, D_IMG = image_features.shape
+        image_features = image_features.view(-1, D_IMG)
         ### prepare input token
-        new_input_embeds = []
-        new_labels = []
-        max_image_token_indice = self.get_max_image_token_indice(samples)
-        self.img_start = max_image_token_indice
-        self.img_end = max_image_token_indice + image_features.shape[1]
-        for idx, cur_input_ids in enumerate(samples["input_ids"]):
-            cur_labels = samples["labels"][idx]
-            cur_new_input_ids = torch.zeros(max_image_token_indice, dtype=cur_input_ids.dtype, device=device)
-            cur_new_labels = torch.full((max_image_token_indice,), IGNORE_INDEX, device=device, dtype=label_dtype)
-            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
-            if num_images == 0: # no image in this sample
-                # mask image feature, set to 0
-                image_features[idx] = torch.zeros_like(image_features[idx])
-            elif num_images == 1: # only one image in this sample
-                image_token_indice = torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0][0]
-                # first text part, left paded
-                cur_new_input_ids[-image_token_indice:] = cur_input_ids[:image_token_indice]
-                cur_new_labels[-image_token_indice:] = cur_labels[:image_token_indice]
-            else:
-                raise ValueError(f"Too many images in one sample: {num_images}, should be 0 or 1.")
-            # convert to list
-            cur_new_input_embeds = [self.rwkv.emb(cur_new_input_ids)]
-            cur_new_labels = [cur_new_labels]
-            # image part
-            cur_image_features = image_features[idx]
-            cur_new_input_embeds.append(cur_image_features)
-            cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=device, dtype=label_dtype))
-            # last text part
-            if num_images == 1:
-                cur_new_input_embeds.append(self.rwkv.emb(cur_input_ids[image_token_indice+1:]))
-                cur_new_labels.append(cur_labels[image_token_indice+1:])
-            else: # no image
-                cur_new_input_embeds.append(self.rwkv.emb(cur_input_ids))
-                cur_new_labels.append(cur_labels)
-            # concat them
-            cur_new_input_embeds = torch.cat(cur_new_input_embeds)
-            cur_new_labels = torch.cat(cur_new_labels)
-
-            new_input_embeds.append(cur_new_input_embeds)
-            new_labels.append(cur_new_labels)
-        # Truncate sequences to max length as image embeddings can make the sequence longer
-        # keep the first `ctx_len` tokens, to make sure instruction complete
-        if truncate:
-            new_input_embeds, new_labels = self.truncate_input(new_input_embeds, new_labels)
-        # Combine them
-        max_len = max(x.shape[0] for x in new_input_embeds)
-        batch_size = len(new_input_embeds)
-        new_input_embeds_padded = torch.zeros((batch_size, max_len, self.args.n_embd), dtype=emb_dtype, device=device)
-        new_labels_padded = torch.full((batch_size, max_len), IGNORE_INDEX, dtype=label_dtype, device=device)
-        for i, (cur_new_embed, cur_new_labels) in enumerate(zip(new_input_embeds, new_labels)):
-            cur_len = cur_new_embed.shape[0]
-            new_input_embeds_padded[i, :cur_len] = cur_new_embed
-            new_labels_padded[i, :cur_len] = cur_new_labels
-        return new_input_embeds_padded, new_labels_padded, image_features
+        input_embeds = self.rwkv.emb(samples["input_ids"])
+        B, L, D = input_embeds.shape
+        input_embeds = input_embeds.view(B * L, D)
+        input_ids = samples["input_ids"].view(B * L)
+        selected = (input_ids == IMAGE_TOKEN_INDEX)
+        selected_sum = selected.sum()
+        assert selected_sum != 0, "No image token found in the input"
+        if selected_sum != B_IMG*L_IMG:
+            # truncate the input to the first image token
+            image_features = image_features[:selected_sum]
+            rank_zero_warn("Number of image tokens does not match the number of images, truncating the image_features")
+        input_embeds[selected] = image_features
+        return input_embeds.view(B, L, D), samples["labels"]
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
@@ -595,7 +491,7 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _, image_features = self.preparing_embedding(sampels, truncate=False)
+        x, _ = self.preparing_embedding(sampels)
         # generate
         generated_tokens = []
         generated_token_logits = []
