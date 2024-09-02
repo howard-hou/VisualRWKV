@@ -179,6 +179,12 @@ def eval_model(args):
         
         input_ids = data_dict['input_ids'].unsqueeze(0).to(args.device)
         cur_prompt = data_dict['input_text']
+        if i == 0:
+            print("input_ids.shape: ", input_ids.shape)
+            print("input_ids: ", input_ids)
+            print("cur_prompt: ", cur_prompt)
+            for k in image_dict:
+                print(f"image_dict[{k}].shape: {image_dict[k].shape}")
 
         with torch.inference_mode():
             output_ids, output_logits, output_probs = model.generate(
