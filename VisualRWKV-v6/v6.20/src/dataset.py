@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
-from pytorch_lightning.utilities import rank_zero_info
+from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from typing import Dict, List, Sequence, Any
 from collections import defaultdict
 from pathlib import Path
@@ -34,24 +34,6 @@ def multi_image_collate_fn(batch):
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images)
 
 
-def truncate_conversations(conversations: Sequence[Dict], max_images: int) -> Sequence[Dict]:
-    """
-    truncate conversations to max_images, from the beginning
-    """
-    # conv pairs
-    num_images = 0
-    conversations_truncated = []
-    for i in range(0, len(conversations), 2):
-        if DEFAULT_IMAGE_TOKEN in conversations[i]['value']:
-            if num_images < max_images:
-                conversations_truncated.append(conversations[i])
-                conversations_truncated.append(conversations[i+1])
-                num_images += 1
-            else:
-                break
-    return conversations_truncated
-
-
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
 ) -> Sequence[Dict]:
@@ -62,11 +44,13 @@ def process_image_tokens_in_conversations(
     """
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
+            num_images = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
             if sentence['from'].lower() == "human":
                 # always put image token at the beginning
-                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
+                image_prifix = "\n".join(num_images * [DEFAULT_IMAGE_TOKEN])
+                sentence['value'] = image_prifix + '\n' + sentence['value']
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
@@ -228,10 +212,8 @@ class MyDataset(Dataset):
             except:
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
-
-            # truncate conversations to max_images
-            conversations = truncate_conversations(copy.deepcopy(sample["conversations"]), self.max_image)
-            conversations = process_image_tokens_in_conversations(conversations)
+            # 
+            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
