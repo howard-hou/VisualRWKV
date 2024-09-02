@@ -195,7 +195,11 @@ class MyDataset(Dataset):
         is_image_available = True
         if 'image_dir' in sample:
             image_folder = Path(args.image_folder) / sample['image_dir']
-            image_paths = [image_folder / item['image'] for item in sample['conversations'] if 'image' in item]
+            image_paths = []
+            for item in sample['conversations']:
+                if 'image' in item:
+                    for image in item['image']:
+                        image_paths.append(image_folder / image)
             image_paths = image_paths[:self.max_image] # only use the first max_image images
             # try and except to handle the case where the image is not found or not readable
             try:
