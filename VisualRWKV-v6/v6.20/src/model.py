@@ -498,7 +498,7 @@ class VisualRWKV(pl.LightningModule):
         generated_token_logits = []
         generated_token_probs = []
         for i in range(max_new_tokens):
-            logits = self.bidirectional_forward(x)[:, -1, :]
+            logits = self.rwkv(x)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
