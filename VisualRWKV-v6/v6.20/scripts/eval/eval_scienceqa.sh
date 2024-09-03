@@ -10,7 +10,7 @@ n_embd=$4
 n_layer=$5
 eval_dir=$6
 vision_tower_dir=$7
-image_position=$8
+
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
 # get the name of the model without extension
@@ -30,7 +30,7 @@ exp_name="${exp_name}_${model_name}"
 echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"
-echo "vision_tower_dir: $vision_tower_dir", "image position: $image_position"
+echo "vision_tower_dir: $vision_tower_dir"
 echo "num of chunks: $CHUNKS"
 
 mkdir -p $eval_dir/eval/scienceqa/answers/$exp_name
@@ -45,8 +45,7 @@ for IDX in $(seq 0 $((CHUNKS-1))); do
         --question_file $eval_dir/eval/scienceqa/llava_test_CQM-A.json \
         --output_file $eval_dir/eval/scienceqa/answers/$exp_name/${CHUNKS}_${IDX}.jsonl \
         --num_chunks $CHUNKS \
-        --chunk_idx $IDX \
-        --image_position $image_position &
+        --chunk_idx $IDX &
     echo "Started chunk $IDX"
 done
 wait

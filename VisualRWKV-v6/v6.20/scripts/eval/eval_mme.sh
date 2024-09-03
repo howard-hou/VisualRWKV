@@ -5,7 +5,7 @@ n_embd=$4
 n_layer=$5
 eval_dir=$6
 vision_tower_dir=$7
-image_position=$8
+
 # 使用dirname命令获取父目录的路径
 parent_dir=$(dirname "${model_path}")
 # get the name of the model without extension
@@ -25,7 +25,7 @@ exp_name="${exp_name}_${model_name}"
 echo "exp name: $exp_name, model path: $model_path"
 echo "ctx_len: $ctx_len, grid_size: $grid_size, n_embd: $n_embd, n_layer: $n_layer"
 echo "eval dir: $eval_dir"
-echo "vision tower dir: $vision_tower_dir", "image position: $image_position"
+echo "vision tower dir: $vision_tower_dir"
 
 python evaluate.py \
     --ctx_len $ctx_len --grid_size $grid_size --n_embd $n_embd --n_layer $n_layer \
@@ -33,8 +33,7 @@ python evaluate.py \
     --model_path $model_path \
     --image_folder $eval_dir/eval/MME/MME_Benchmark_release_version \
     --question_file $eval_dir/eval/MME/llava_mme.jsonl \
-    --output_file $eval_dir/eval/MME/answers/$exp_name.jsonl \
-    --image_position $image_position
+    --output_file $eval_dir/eval/MME/answers/$exp_name.jsonl 
 
 cd $eval_dir/eval/MME
 

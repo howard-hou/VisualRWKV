@@ -135,6 +135,7 @@ def eval_model(args):
             tokenizer,
             has_image=True,
             ctx_len=args.ctx_len,
+            num_token_per_image=args.num_token_per_image,
             pad_token_id=0,
             do_pad_to_max_length=False)
         
@@ -198,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument("--num_token_per_image", type=int, default=16)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)
