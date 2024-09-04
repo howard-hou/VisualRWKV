@@ -341,30 +341,6 @@ class VisualRWKV(pl.LightningModule):
         x = self.rwkv.ln_out(x)
         x = self.rwkv.head(x)
         return x
-
-    def bidirectional_forward(self, x, x_emb):
-        args = self.args
-        if args.dropout > 0:
-            x = self.rwkv.drop0(x)
-
-        for i, block in enumerate(self.rwkv.blocks):
-            do_reverse = (i % 2 == 1)
-            if do_reverse: # reverse
-                x_emb = x_emb.flip(1)
-            
-            if args.grad_cp == 1:
-                x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, state)
-            else:
-                x_emb, state = block(x_emb, None)
-                x, _ = block(x, state)
-            
-            if do_reverse: # reverse back
-                x_emb = x_emb.flip(1)
-
-        x = self.rwkv.ln_out(x)
-        x = self.rwkv.head(x)
-        return x
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
