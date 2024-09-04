@@ -262,39 +262,8 @@ print('gv', get_err_ratio(gv3, gv))
 print('gw', get_err_ratio(gw3, gw))
 print('gu', get_err_ratio(gu3, gu))
 
-# step8: run fla chunk implementation
-def run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
-    r = r.view(B,T,H,-1).transpose(1,2)
-    k = k.view(B,T,H,-1).transpose(1,2)
-    v = v.view(B,T,H,-1).transpose(1,2)
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
 
-start_time = time.time()
-y_chunk_fla, state_chunk_fla = run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, None)
-end_time = time.time()
-print("#"*100)
-print('fla chunk time:', end_time - start_time)
-LOSS(y_chunk_fla).backward()
-gr6 = r.grad.data.clone()
-gk6 = k.grad.data.clone()
-gv6 = v.grad.data.clone()
-gw6 = w.grad.data.clone()
-gu6 = u.grad.data.clone()
-clear_grad()
-print("max abs y error: ", (y32 - y_chunk_fla).abs().max().item())
-print("max abs state error: ", (state_chunk_fla - state_naive_fla).abs().max().item())
-print('fla chunk err ratio:')
-print('y', get_err_ratio(y_chunk_fla, y32))
-print('gr', get_err_ratio(gr6, gr))
-print('gk', get_err_ratio(gk6, gk))
-print('gv', get_err_ratio(gv6, gv))
-print('gw', get_err_ratio(gw6, gw))
-print('gu', get_err_ratio(gu6, gu))
-print("#"*100)
-
-# step9: my naive implementation
+# step8: my naive implementation
 def naive_recurrent_rwkv6_my(
     r: torch.Tensor,
     k: torch.Tensor,
@@ -439,3 +408,70 @@ print('gk', get_err_ratio(gk5, gk))
 print('gv', get_err_ratio(gv5, gv))
 print('gw', get_err_ratio(gw5, gw))
 print('gu', get_err_ratio(gu5, gu))
+
+
+# step: run fla chunk implementation
+def run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
+    r = r.view(B,T,H,-1).transpose(1,2)
+    k = k.view(B,T,H,-1).transpose(1,2)
+    v = v.view(B,T,H,-1).transpose(1,2)
+    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
+    o, final_state = chunk_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True, checkpoint_level=0)
+    return o.transpose(1,2).reshape(B,T,C), final_state
+
+print("#"*50 + "fla chunk implementation" + "#"*50)
+for i in range(5):
+    start_time = time.time()
+    y_chunk_fla, state_chunk_fla = run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
+    end_time = time.time()
+    print(f'fla chunk time {i}:', end_time - start_time)
+LOSS(y_chunk_fla).backward()
+gr6 = r.grad.data.clone()
+gk6 = k.grad.data.clone()
+gv6 = v.grad.data.clone()
+gw6 = w.grad.data.clone()
+gu6 = u.grad.data.clone()
+clear_grad()
+print("max abs y error: ", (y32 - y_chunk_fla).abs().max().item())
+print("max abs state error: ", (state_chunk_fla - state_naive_fla).abs().max().item())
+print('fla chunk err ratio:')
+print('y', get_err_ratio(y_chunk_fla, y32))
+print('gr', get_err_ratio(gr6, gr))
+print('gk', get_err_ratio(gk6, gk))
+print('gv', get_err_ratio(gv6, gv))
+print('gw', get_err_ratio(gw6, gw))
+print('gu', get_err_ratio(gu6, gu))
+print("#"*100)
+
+# step: run fla fused implementation
+def run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
+    r = r.view(B,T,H,-1).transpose(1,2)
+    k = k.view(B,T,H,-1).transpose(1,2)
+    v = v.view(B,T,H,-1).transpose(1,2)
+    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
+    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
+    return o.transpose(1,2).reshape(B,T,C), final_state
+
+print("#"*50 + "fla fused implementation" + "#"*50)
+for i in range(5):
+    start_time = time.time()
+    y_fused_fla, state_fused_fla = run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
+    end_time = time.time()
+    print(f'fla fused time {i}:', end_time - start_time)
+LOSS(y_fused_fla).backward()
+gr7 = r.grad.data.clone()
+gk7 = k.grad.data.clone()
+gv7 = v.grad.data.clone()
+gw7 = w.grad.data.clone()
+gu7 = u.grad.data.clone()
+clear_grad()
+print("max abs y error: ", (y32 - y_fused_fla).abs().max().item())
+print("max abs state error: ", (state_fused_fla - state_naive_fla).abs().max().item())
+print('fla fused err ratio:')
+print('y', get_err_ratio(y_fused_fla, y32))
+print('gr', get_err_ratio(gr7, gr))
+print('gk', get_err_ratio(gk7, gk))
+print('gv', get_err_ratio(gv7, gv))
+print('gw', get_err_ratio(gw7, gw))
+print('gu', get_err_ratio(gu7, gu))
+print("#"*100)
