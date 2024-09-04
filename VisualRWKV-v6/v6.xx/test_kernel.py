@@ -5,6 +5,7 @@ from torch.utils.cpp_extension import load
 from torch.nn import functional as F
 import numpy as np
 from einops import rearrange
+from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
 np.set_printoptions(precision=4, suppress=True, linewidth=200)
 # turn off TF32 for higher accuracy
 torch.backends.cudnn.allow_tf32 = False
@@ -212,6 +213,7 @@ def run_naive_recurrent_fla(B, T, C, H, r, k, v, w, u, s):
     o, final_state = naive_recurrent_rwkv6_fla(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
     return o.transpose(1,2).reshape(B,T,C), final_state
 
+
 # step6: run baseline implementation
 print(f'start exp: B={B} T={T} C={C} HEAD_SIZE={HEAD_SIZE} DTYPE={DTYPE} DEVICE={DEVICE}')
 clear_grad()
@@ -260,7 +262,39 @@ print('gv', get_err_ratio(gv3, gv))
 print('gw', get_err_ratio(gw3, gw))
 print('gu', get_err_ratio(gu3, gu))
 
-# step5: my naive implementation
+# step8: run fla chunk implementation
+def run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
+    r = r.view(B,T,H,-1).transpose(1,2)
+    k = k.view(B,T,H,-1).transpose(1,2)
+    v = v.view(B,T,H,-1).transpose(1,2)
+    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
+    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
+    return o.transpose(1,2).reshape(B,T,C), final_state
+
+start_time = time.time()
+y_chunk_fla, state_chunk_fla = run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, None)
+end_time = time.time()
+print("#"*100)
+print('fla chunk time:', end_time - start_time)
+LOSS(y_chunk_fla).backward()
+gr6 = r.grad.data.clone()
+gk6 = k.grad.data.clone()
+gv6 = v.grad.data.clone()
+gw6 = w.grad.data.clone()
+gu6 = u.grad.data.clone()
+clear_grad()
+print("max abs y error: ", (y32 - y_chunk_fla).abs().max().item())
+print("max abs state error: ", (state_chunk_fla - state_naive_fla).abs().max().item())
+print('fla chunk err ratio:')
+print('y', get_err_ratio(y_chunk_fla, y32))
+print('gr', get_err_ratio(gr6, gr))
+print('gk', get_err_ratio(gk6, gk))
+print('gv', get_err_ratio(gv6, gv))
+print('gw', get_err_ratio(gw6, gw))
+print('gu', get_err_ratio(gu6, gu))
+print("#"*100)
+
+# step9: my naive implementation
 def naive_recurrent_rwkv6_my(
     r: torch.Tensor,
     k: torch.Tensor,
