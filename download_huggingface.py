@@ -5,5 +5,4 @@ snapshot_download(repo_id="lmms-lab/M4-Instruct-Data",
                   local_dir="D:\huggingface_datasets\lmms-lab/M4-Instruct-Data",
                   allow_patterns=["*.zip", "*.json", "*.z01"],
                   ignore_patterns=["*.h5", "*.ot", "*.msgpack"],
-                  resume_download=True,
                   local_dir_use_symlinks=False)
