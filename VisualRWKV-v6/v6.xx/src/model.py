@@ -16,7 +16,7 @@ if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from einops import rearrange
-from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6
+from fla.ops.rwkv6 import chunk_rwkv6, fused_recurrent_rwkv6, native_recurrent_rwkv6
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
@@ -37,7 +37,7 @@ def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     k = rearrange(k, 'b l (h d) -> b h l d', h = H)
     v = rearrange(v, 'b l (h d) -> b h l d', h = H)
     w = rearrange(-torch.exp(w), 'b l (h d) -> b h l d', h = H)
-    o, state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
+    o, state = native_recurrent_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
     x = rearrange(o, 'b h l d -> b l (h d)')
     return x, state
 
@@ -365,6 +365,12 @@ class VisualRWKV(pl.LightningModule):
             all = self.all_gather(batch_parts)
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
+
+    def print_all_grad(self):
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                if param.grad is not None:
+                    print(name, param.grad.sum().item())
     
     def encode_images(self, images):
         B, N, C, H, W = images.shape

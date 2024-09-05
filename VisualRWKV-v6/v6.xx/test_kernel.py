@@ -1,5 +1,5 @@
 from typing import Optional
-import time
+import time, sys
 import torch
 from torch.utils.cpp_extension import load
 from torch.nn import functional as F
@@ -11,6 +11,7 @@ np.set_printoptions(precision=4, suppress=True, linewidth=200)
 torch.backends.cudnn.allow_tf32 = False
 torch.backends.cuda.matmul.allow_tf32 = False
 
+test_task = sys.argv[1]
 # step1: set up exp parameters
 B = 2
 T = 1024
@@ -48,7 +49,7 @@ with torch.no_grad():
     v = torch.empty(B, T, C, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
     w = torch.empty(B, T, C, device=DEVICE, dtype=DTYPE).uniform_(-8, 1).requires_grad_(require_grad)
     u = torch.empty(H, HEAD_SIZE, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
-    s = torch.empty(B, H, HEAD_SIZE, HEAD_SIZE, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
+    initial_state = torch.empty(B, H, HEAD_SIZE, HEAD_SIZE, device=DEVICE, dtype=DTYPE).uniform_(-1, 1).requires_grad_(require_grad)
 
 def clear_grad():   
     r.requires_grad_()
@@ -56,13 +57,13 @@ def clear_grad():
     v.requires_grad_()
     w.requires_grad_()
     u.requires_grad_()
-    s.requires_grad_()
+    initial_state.requires_grad_()
     if r.grad is not None: r.grad.data.zero_()
     if k.grad is not None: k.grad.data.zero_()
     if v.grad is not None: v.grad.data.zero_()
     if w.grad is not None: w.grad.data.zero_()
     if u.grad is not None: u.grad.data.zero_()
-    if s.grad is not None: s.grad.data.zero_()
+    if initial_state.grad is not None: initial_state.grad.data.zero_()
 
 
 # step3: load cuda kernel as baseline
@@ -241,207 +242,40 @@ gw2 = w.grad.data.clone()
 gu2 = u.grad.data.clone()
 clear_grad()
 
-# step7: run fla naive implementation
-start_time = time.time()
-y_naive_fla, state_naive_fla = run_naive_recurrent_fla(B, T, C, H, r, k, v, w, u, None)
-end_time = time.time()
-print('fla naive time:', end_time - start_time)
-LOSS(y_naive_fla).backward()
-gr3 = r.grad.data.clone()
-gk3 = k.grad.data.clone()
-gv3 = v.grad.data.clone()
-gw3 = w.grad.data.clone()
-gu3 = u.grad.data.clone()
-clear_grad()
-
-print('fla naive err ratio:')
-print('y', get_err_ratio(y_naive_fla, y32))
-print('gr', get_err_ratio(gr3, gr))
-print('gk', get_err_ratio(gk3, gk))
-print('gv', get_err_ratio(gv3, gv))
-print('gw', get_err_ratio(gw3, gw))
-print('gu', get_err_ratio(gu3, gu))
-
-
-# step8: my naive implementation
-def naive_recurrent_rwkv6_my(
-    r: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    w: torch.Tensor,
-    u: torch.Tensor,
-    scale: Optional[float] = None,
-    initial_state: Optional[torch.Tensor] = None,
-    output_final_state: Optional[bool] = False
-):
-    orig_dtype = r.dtype
-    B, H, T, K, V = *r.shape, v.shape[-1]
-
-    r, k, v, w, u = map(lambda x: x.float(), (r, k, v, w, u))
-    wkv_state = torch.zeros(B, H, K, V, dtype=torch.float32, device=r.device)
-    o = torch.zeros_like(v)
-
-    if scale is None:
-        scale = K ** -0.5
-
-    if initial_state is not None:
-        wkv_state += initial_state
-
-    for i in range(T):
-        kv = k[:, :, i:i+1, :].mT @ v[:, :, i:i+1, :]
-        out = r[:, :, i:i+1, :] @ (wkv_state + u.mT * kv)
-        wkv_state = w[:, :, i:i+1, :].exp().mT * wkv_state + kv
-        o[:, :, i:i+1, :] = out
-
-    if output_final_state:
-        return o.to(orig_dtype), wkv_state
-    else:
-        return o.to(orig_dtype), None
-    
-def run_naive_recurrent_my(B, T, C, H, r, k, v, w, u, s):
-    r = r.view(B,T,H,-1).transpose(1,2)
-    k = k.view(B,T,H,-1).transpose(1,2)
-    v = v.view(B,T,H,-1).transpose(1,2)
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    u = u.view(1, H, 1, -1)
-    o, final_state = naive_recurrent_rwkv6_my(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
-
-start_time = time.time()
-y_naive_my, state_naive_my = run_naive_recurrent_my(B, T, C, H, r, k, v, w, u, None)
-end_time = time.time()
-print('my naive time:', end_time - start_time)
-LOSS(y_naive_my).backward()
-gr4 = r.grad.data.clone()
-gk4 = k.grad.data.clone()
-gv4 = v.grad.data.clone()
-gw4 = w.grad.data.clone()
-gu4 = u.grad.data.clone()
-clear_grad()
-print("max abs y error: ", (y32 - y_naive_my).abs().max().item())
-print("max abs state error: ", (state_naive_my - state_naive_fla).abs().max().item())
-print('my naive err ratio:')
-print('y', get_err_ratio(y_naive_my, y32))
-print('gr', get_err_ratio(gr4, gr))
-print('gk', get_err_ratio(gk4, gk))
-print('gv', get_err_ratio(gv4, gv))
-print('gw', get_err_ratio(gw4, gw))
-print('gu', get_err_ratio(gu4, gu))
-
-# step8: chunk naive implementation
-def naive_chunk_rwkv6(
-    q,
-    k,
-    v,
-    w,
-    u,
-    chunk_size=32,
-    initial_state=None,
-    output_final_state=True,
-):
-    assert q.shape[-2] % chunk_size == 0
-    orig_dtype = q.dtype
-    num_chunk = q.shape[-2] // chunk_size
-    u = u.unsqueeze(0)
-
-    q, k, v, w = map(lambda x: rearrange(x, 'b h (n c) d -> b h n c d', c=chunk_size).float(), (q, k, v, w))
-
-    w_cumsum = w.cumsum(-2)
-
-    kw = k * (w_cumsum[..., -1, None, :] - w_cumsum).exp()
-    wkv = kw.transpose(-1, -2) @ v
-
-    # Initialize wkv_new as a list to accumulate the results
-    if initial_state is not None:
-        wkv_new = [initial_state]
-    else:
-        wkv_new = [torch.zeros_like(wkv[:, :, 0])]
-
-    # Use a differentiable way to update wkv_new
-    for i in range(num_chunk - 1):
-        new_value = (wkv_new[-1] * w_cumsum[:, :, i, -1, :, None].exp()) + wkv[:, :, i]
-        wkv_new.append(new_value)
-
-    # Stack the list to create the final wkv_new tensor
-    wkv_new = torch.stack(wkv_new, dim=2)
-
-    o_inter = torch.einsum('b h n d p, b h n c d -> b h n c p', wkv_new, (q * (w_cumsum - w).exp()))
-
-    o_intra = torch.zeros_like(o_inter)
-    for i in range(chunk_size):
-        attn = (q[:, :, :, i, None] * k * (w_cumsum[:, :, :, i, None] - w[:, :, :, i, None] - w_cumsum).exp()).sum(-1)
-        mask = (torch.arange(0, chunk_size) < i).to(attn.device)
-        attn.masked_fill_(~mask, 0)
-        intra_inter_o = (attn.unsqueeze(-1) * v).sum(-2)
-        intra_intra_o = (q[:, :, :, i] * u.unsqueeze(2) * k[:, :, :, i]).sum(-1).unsqueeze(-1) * v[:, :, :, i]
-        o_intra[:, :, :, i] = intra_inter_o + intra_intra_o
-    o = o_inter + o_intra
-    # output wkv state should be (b h n d p) -> (b, h, d, p)
-    return rearrange(o, 'b h n c d -> b h (n c) d').to(orig_dtype), wkv_new.sum(2) if output_final_state else None
-
-def run_naive_chunk(B, T, C, H, r, k, v, w, u, s):
-    r = r.view(B,T,H,-1).transpose(1,2)
-    k = k.view(B,T,H,-1).transpose(1,2)
-    v = v.view(B,T,H,-1).transpose(1,2)
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    #u = u.view(1, H, 1, -1)
-    o, final_state = naive_chunk_rwkv6(r, k, v, w, u=u, initial_state=s, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
-
-start_time = time.time()
-y_naive_chunk, state_naive_chunk = run_naive_chunk(B, T, C, H, r, k, v, w, u, None)
-end_time = time.time()
-print('my chunk time:', end_time - start_time)
-LOSS(y_naive_chunk).backward()
-gr5 = r.grad.data.clone()
-gk5 = k.grad.data.clone()
-gv5 = v.grad.data.clone()
-gw5 = w.grad.data.clone()
-gu5 = u.grad.data.clone()
-clear_grad()
-print("max abs y error: ", (y32 - y_naive_chunk).abs().max().item())
-print("max abs state error: ", (state_naive_chunk - state_naive_my).abs().max().item())
-print('my chunk err ratio:')
-print('y', get_err_ratio(y_naive_chunk, y32))
-print('gr', get_err_ratio(gr5, gr))
-print('gk', get_err_ratio(gk5, gk))
-print('gv', get_err_ratio(gv5, gv))
-print('gw', get_err_ratio(gw5, gw))
-print('gu', get_err_ratio(gu5, gu))
-
-
 # step: run fla chunk implementation
 def run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
     r = r.view(B,T,H,-1).transpose(1,2)
     k = k.view(B,T,H,-1).transpose(1,2)
     v = v.view(B,T,H,-1).transpose(1,2)
     w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, final_state = chunk_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True, checkpoint_level=0)
+    o, final_state = chunk_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
     return o.transpose(1,2).reshape(B,T,C), final_state
 
-print("#"*50 + "fla chunk implementation" + "#"*50)
-for i in range(5):
-    start_time = time.time()
-    y_chunk_fla, state_chunk_fla = run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
-    end_time = time.time()
-    print(f'fla chunk time {i}:', end_time - start_time)
-LOSS(y_chunk_fla).backward()
-gr6 = r.grad.data.clone()
-gk6 = k.grad.data.clone()
-gv6 = v.grad.data.clone()
-gw6 = w.grad.data.clone()
-gu6 = u.grad.data.clone()
-clear_grad()
-print("max abs y error: ", (y32 - y_chunk_fla).abs().max().item())
-print("max abs state error: ", (state_chunk_fla - state_naive_fla).abs().max().item())
-print('fla chunk err ratio:')
-print('y', get_err_ratio(y_chunk_fla, y32))
-print('gr', get_err_ratio(gr6, gr))
-print('gk', get_err_ratio(gk6, gk))
-print('gv', get_err_ratio(gv6, gv))
-print('gw', get_err_ratio(gw6, gw))
-print('gu', get_err_ratio(gu6, gu))
-print("#"*100)
+if test_task == 'chunk_rwkv6':
+    print("#"*50 + "fla chunk implementation" + "#"*50)
+    for i in range(5):
+        start_time = time.time()
+        y_chunk_fla, state_chunk_fla = run_chunk_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
+        end_time = time.time()
+        print(f'fla chunk time {i}:', end_time - start_time)
+    LOSS(y_chunk_fla).backward()
+    gr6 = r.grad.data.clone()
+    gk6 = k.grad.data.clone()
+    gv6 = v.grad.data.clone()
+    gw6 = w.grad.data.clone()
+    gu6 = u.grad.data.clone()
+    clear_grad()
+    print("max abs y error: ", (y32 - y_chunk_fla).abs().max().item())
+    print("max abs state error: ", (state_chunk_fla - state_naive_fla).abs().max().item())
+    print('fla chunk err ratio:')
+    print('y', get_err_ratio(y_chunk_fla, y32))
+    print('gr', get_err_ratio(gr6, gr))
+    print('gk', get_err_ratio(gk6, gk))
+    print('gv', get_err_ratio(gv6, gv))
+    print('gw', get_err_ratio(gw6, gw))
+    print('gu', get_err_ratio(gu6, gu))
+    print("#"*100)
+
 
 # step: run fla fused implementation
 def run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
@@ -451,27 +285,76 @@ def run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s):
     w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
     o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1, initial_state=s, output_final_state=True)
     return o.transpose(1,2).reshape(B,T,C), final_state
+if test_task == 'fused_rwkv6':
+    print("#"*50 + "fla fused implementation" + "#"*50)
+    for i in range(5):
+        start_time = time.time()
+        y_fused_fla, state_fused_fla = run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
+        end_time = time.time()
+        print(f'fla fused time {i}:', end_time - start_time)
+    LOSS(y_fused_fla).backward()
+    gr7 = r.grad.data.clone()
+    gk7 = k.grad.data.clone()
+    gv7 = v.grad.data.clone()
+    gw7 = w.grad.data.clone()
+    gu7 = u.grad.data.clone()
+    clear_grad()
+    print("max abs y error: ", (y32 - y_fused_fla).abs().max().item())
+    print("max abs state error: ", (state_fused_fla - state_naive_fla).abs().max().item())
+    print('fla fused err ratio:')
+    print('y', get_err_ratio(y_fused_fla, y32))
+    print('gr', get_err_ratio(gr7, gr))
+    print('gk', get_err_ratio(gk7, gk))
+    print('gv', get_err_ratio(gv7, gv))
+    print('gw', get_err_ratio(gw7, gw))
+    print('gu', get_err_ratio(gu7, gu))
+    print("#"*100)
 
-print("#"*50 + "fla fused implementation" + "#"*50)
-for i in range(5):
-    start_time = time.time()
-    y_fused_fla, state_fused_fla = run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=None)
-    end_time = time.time()
-    print(f'fla fused time {i}:', end_time - start_time)
-LOSS(y_fused_fla).backward()
-gr7 = r.grad.data.clone()
-gk7 = k.grad.data.clone()
-gv7 = v.grad.data.clone()
-gw7 = w.grad.data.clone()
-gu7 = u.grad.data.clone()
-clear_grad()
-print("max abs y error: ", (y32 - y_fused_fla).abs().max().item())
-print("max abs state error: ", (state_fused_fla - state_naive_fla).abs().max().item())
-print('fla fused err ratio:')
-print('y', get_err_ratio(y_fused_fla, y32))
-print('gr', get_err_ratio(gr7, gr))
-print('gk', get_err_ratio(gk7, gk))
-print('gv', get_err_ratio(gv7, gv))
-print('gw', get_err_ratio(gw7, gw))
-print('gu', get_err_ratio(gu7, gu))
-print("#"*100)
+if test_task == 'fused_rwkv6_state_reuse':
+    # # Check reuse the first state
+    y_fused_fla, state = run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=initial_state)
+    y_fused_fla2, _ = run_fused_rwkv6_fla(B, T, C, H, r, k, v, w, u, s=state)
+    LOSS(y_fused_fla2).backward()
+    gr8 = r.grad.data.clone()
+    gk8 = k.grad.data.clone()
+    gv8 = v.grad.data.clone()
+    gw8 = w.grad.data.clone()
+    gu8 = u.grad.data.clone()
+    gh8 = initial_state.grad.data.clone()
+    clear_grad()
+    print("grad of initial state, max and sum: ", gh8.abs().max().item(), gh8.abs().sum().item())
+    print("grad of state, max and sum: ", state.abs().max().item(), state.abs().sum().item())
+
+if test_task == 'chunk_rwkv6_proj':
+    # check projection grad
+    import torch.nn as nn
+    T_img = 1
+    print("#"*50 + "check chunk rwkv6 projection layer for img + text" + "#"*50)
+    image_feature = torch.randn(B, T_img, C, device=DEVICE, dtype=DTYPE)
+    proj_layer = nn.Linear(C, C, bias=False, device=DEVICE, dtype=DTYPE)
+    img = proj_layer(image_feature)
+    linear_r = nn.Linear(C, C, bias=False, device=DEVICE, dtype=DTYPE)
+    linear_w = nn.Linear(C, C, bias=False, device=DEVICE, dtype=DTYPE)
+    linear_k = nn.Linear(C, C, bias=False, device=DEVICE, dtype=DTYPE)
+    linear_v = nn.Linear(C, C, bias=False, device=DEVICE, dtype=DTYPE)
+    linear_r.requires_grad_(False)
+    linear_w.requires_grad_(False)
+    linear_k.requires_grad_(False)
+    linear_v.requires_grad_(False)
+    r_img = linear_r(img)
+    w_img = linear_w(img)
+    k_img = linear_k(img)
+    v_img = linear_v(img)
+    y_img, img_state = run_chunk_rwkv6_fla(B, T_img, C, H, r_img, k_img, v_img, w_img, u, s=None)
+
+    text_emb = torch.randn(B, T, C, device=DEVICE, dtype=DTYPE)
+    r_text = linear_r(text_emb)
+    w_text = linear_w(text_emb)
+    k_text = linear_k(text_emb)
+    v_text = linear_v(text_emb)
+    y_text, text_state = run_chunk_rwkv6_fla(B, T, C, H, r_text, k_text, v_text, w_text, u, s=img_state)
+
+    LOSS(y_text).backward()
+    gproj = proj_layer.weight.grad.data.clone()
+    clear_grad()
+    print("grad of projection layer, max and sum: ", gproj.abs().max().item(), gproj.abs().sum().item())
