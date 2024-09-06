@@ -37,7 +37,7 @@ def RUN_CUDA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     k = rearrange(k, 'b l (h d) -> b h l d', h = H)
     v = rearrange(v, 'b l (h d) -> b h l d', h = H)
     w = rearrange(-torch.exp(w), 'b l (h d) -> b h l d', h = H)
-    o, state = native_recurrent_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
+    o, state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1., initial_state=s, output_final_state=True)
     x = rearrange(o, 'b h l d -> b l (h d)')
     return x, state
 

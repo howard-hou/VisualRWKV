@@ -189,13 +189,11 @@ class MyDataset(Dataset):
             sample = self.list_data_dict_reverse[sample_idx]
 
         is_image_available = True
-        if 'image_dir' in sample:
-            image_folder = Path(args.image_folder) / sample['image_dir']
-            image_paths = []
-            for item in sample['conversations']:
-                if 'image' in item:
-                    for image in item['image']:
-                        image_paths.append(image_folder / image)
+        if 'image' in sample:
+            if isinstance(sample['image'], str):
+                sample['image'] = [sample['image']]
+            image_folder = Path(args.image_folder)
+            image_paths = [image_folder / image_name for image_name in sample['image']]
             image_paths = image_paths[:self.max_image] # only use the first max_image images
             # try and except to handle the case where the image is not found or not readable
             try:
@@ -220,16 +218,16 @@ class MyDataset(Dataset):
         data_dict = preprocess(
             conversations,
             self.tokenizer,
-            has_image=('image_dir' in sample),
+            has_image=('image' in sample),
             ctx_len=args.ctx_len,
             num_token_per_image=args.num_token_per_image,
             pad_token_id=0)
         
         # image exist in the data
-        if 'image_dir' in sample and is_image_available:
+        if 'image' in sample and is_image_available:
             data_dict['images'] = merged_pixel_values
         else:
-            if 'image_dir' in sample and not is_image_available:
+            if 'image' in sample and not is_image_available:
                 N = len(image_paths)
                 data_dict['images'] = {"dino":torch.zeros(N, 3, 448, 448), 
                                     "siglip":torch.zeros(N, 3, 448, 448),
