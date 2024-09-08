@@ -35,24 +35,40 @@ def multi_image_collate_fn(batch):
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
+def calc_num_images_to_add(num_local_images, num_image_paths, num_global_images):
+    residual_capacity = num_image_paths - num_global_images
+    if residual_capacity <= 0:
+        return 0
+    if num_local_images <= residual_capacity:
+        return num_local_images
+    return residual_capacity
+
+
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
+    num_image_paths: int
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
     image first, then text
     replace \n\n with \n
+    make sure the number of image tokens is euqal to the number of image paths
     """
+    num_global_images = 0
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
-            num_images = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
+            # must count first, then replace
+            num_local_images = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
+            # 
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
             if sentence['from'].lower() == "human":
+                num_images_to_add = calc_num_images_to_add(num_local_images, num_image_paths, num_global_images)
                 # always put image token at the beginning
-                image_prifix = "\n".join(num_images * [DEFAULT_IMAGE_TOKEN])
+                image_prifix = "\n".join(num_images_to_add * [DEFAULT_IMAGE_TOKEN])
                 sentence['value'] = image_prifix + '\n' + sentence['value']
             sentence['value'] = sentence['value'].strip()
+            num_global_images += num_local_images
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
 
@@ -196,6 +212,7 @@ class MyDataset(Dataset):
             image_folder = Path(args.image_folder)
             image_paths = [image_folder / image_name for image_name in sample['image']]
             image_paths = image_paths[:self.max_image] # only use the first max_image images
+            num_image_paths = len(image_paths)
             # try and except to handle the case where the image is not found or not readable
             try:
                 pixel_values = defaultdict(list)
@@ -212,7 +229,10 @@ class MyDataset(Dataset):
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
             # 
-            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
+            conversations, num_images = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
+                                                                              num_image_paths=num_image_paths)
+            if num_images != len(image_paths):
+                rank_zero_warn(f"num_images in conv: {num_images}, num_image_paths: {len(image_paths)}")
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
