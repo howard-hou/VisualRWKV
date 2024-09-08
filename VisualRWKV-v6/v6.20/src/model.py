@@ -478,6 +478,9 @@ class VisualRWKV(pl.LightningModule):
                 one_sum = selected[i].sum()
                 one_feature = image_features[i][:one_sum, :]
                 image_features_list.append(one_feature)
+                if one_sum < L_IMG:
+                    sample_id = samples["sample_id"][i]
+                    rank_zero_warn(f"\nSample {sample_id} has {one_sum} image tokens, less than {L_IMG}\n")
             image_features = torch.cat(image_features_list, dim=0)
         else: # match
             image_features = image_features.view(-1, D_IMG)
