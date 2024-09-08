@@ -11,7 +11,7 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from transformers import CLIPVisionModel
+
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
