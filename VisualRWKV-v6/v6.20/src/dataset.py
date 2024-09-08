@@ -26,12 +26,13 @@ def multi_image_collate_fn(batch):
     input_text = [x['input_text'] for x in batch]
     input_ids = torch.stack([x['input_ids'] for x in batch])
     labels = torch.stack([x['labels'] for x in batch])
+    sample_id = [x['sample_id'] for x in batch]
     # concatenate images
     all_dino = torch.cat([x['images']['dino'] for x in batch if 'images' in x], dim=0)
     all_sam = torch.cat([x['images']['sam'] for x in batch if 'images' in x], dim=0)
     all_siglip = torch.cat([x['images']['siglip'] for x in batch if 'images' in x], dim=0)
     images = {"dino": all_dino, "sam": all_sam, "siglip": all_siglip}
-    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images)
+    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
 def process_image_tokens_in_conversations(
