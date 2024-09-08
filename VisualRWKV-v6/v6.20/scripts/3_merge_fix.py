@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from unidecode import unidecode
 
 
 # 设置文件夹路径
@@ -18,7 +19,8 @@ for line in orig_data:
         print(f"Sample id not found in {line}")
         continue
     if isinstance(line['image'], list):
-        image = sorted([Path(img).stem for img in line['image']])
+        # sort image names to make sure the order is consistent, ans also fix latin letters
+        image = sorted([unidecode(Path(img).stem) for img in line['image']])
         image = '-'.join(image)
     else:
         image = line['image']
@@ -36,7 +38,7 @@ for line in fix_data:
         print(f"Sample id not found in {line}")
         continue
     if isinstance(line['image'], list):
-        image = sorted([Path(img).stem for img in line['image']])
+        image = sorted([unidecode(Path(img).stem) for img in line['image']])
         image = '-'.join(image)
     else:
         image = line['image']

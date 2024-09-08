@@ -3,6 +3,9 @@ import sys
 from PIL import Image
 from pathlib import Path
 
+from unidecode import unidecode
+
+
 def fix_suffix(not_exist_image):
     exist_image = {}
     for img_path in not_exist_image:
@@ -12,6 +15,7 @@ def fix_suffix(not_exist_image):
     still_not_exist_image = [f for f in not_exist_image if f not in exist_image]
     fixed_image_list = [f for f in exist_image.values()]
     return still_not_exist_image, fixed_image_list
+
 
 def any2jpg(image_path_list):
     jpeg_image_list = []
@@ -25,11 +29,22 @@ def any2jpg(image_path_list):
             img.convert("RGB").save(jpg_path, "JPEG")
             if str(file_path) != str(jpg_path):
                 file_path.unlink()
-            print(f"{file_path.name} 转换并替换为JPEG {jpg_filename}")
+            print(f"发现非JEPG格式，{file_path.name} 转换并替换为JPEG {jpg_filename}")
             jpeg_image_list.append(jpg_path)
     return jpeg_image_list
 
 
+def replace_latin_characters(image_path_list: list[Path]) -> list[Path]:
+    new_path_list = []
+    for img_path in image_path_list:
+        new_path = img_path.parent / unidecode(img_path.name)
+        if str(new_path) != str(img_path):
+            img = Image.open(img_path)
+            img.save(new_path)
+            img_path.unlink()
+            print(f"文件名中发现拉丁字母，{img_path.name} 转换并替换为 {new_path.name}")
+        new_path_list.append(new_path)
+    return new_path_list
 
 # 设置文件夹路径
 input_json = sys.argv[1]
@@ -42,6 +57,8 @@ data = json.load(open(input_json))
 keep, drop = [], []
 for i, line in enumerate(data):
     image_path_list = [image_folder / img for img in line['image']]
+    # 先统一把文件路径归一化，可能是拉丁文字符导致的路径不一致
+    image_path_list = replace_latin_characters(image_path_list)
     not_exist_image = [f for f in image_path_list if not f.exists()]
     exist_image = [f for f in image_path_list if f.exists()]
     # 第一种情况：图片文件不存在，看看是不是后缀名错误

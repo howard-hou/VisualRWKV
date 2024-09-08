@@ -465,18 +465,25 @@ class VisualRWKV(pl.LightningModule):
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
         B_IMG, L_IMG, D_IMG = image_features.shape
-        image_features = image_features.view(-1, D_IMG)
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
         B, L, D = input_embeds.shape
         input_embeds = input_embeds.view(B * L, D)
-        input_ids = samples["input_ids"].view(B * L)
-        selected = (input_ids == IMAGE_TOKEN_INDEX)
+        # match the number of image tokens with the number of images
+        selected = (samples["input_ids"] == IMAGE_TOKEN_INDEX) # [B, L]
         selected_sum = selected.sum()
-        if selected_sum != B_IMG*L_IMG:
-            # truncate the input to the first image token
-            image_features = image_features[:selected_sum]
-            rank_zero_warn("Number of image tokens does not match the number of images, truncating the image_features")
+        if selected_sum != B_IMG*L_IMG: # mismatch
+            image_features_list = []
+            for i in range(B):
+                one_sum = selected[i].sum()
+                one_feature = image_features[i][:one_sum, :]
+                image_features_list.append(one_feature)
+            image_features = torch.cat(image_features_list, dim=0)
+        else: # match
+            image_features = image_features.view(-1, D_IMG)
+
+        # fill the image features to the input_embeds
+        selected = selected.view(B * L)
         input_embeds[selected] = image_features
         return input_embeds.view(B, L, D), samples["labels"]
     

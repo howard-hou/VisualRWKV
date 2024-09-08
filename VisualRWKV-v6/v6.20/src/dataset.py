@@ -232,4 +232,6 @@ class MyDataset(Dataset):
                 data_dict['images'] = {"dino":torch.zeros(N, 3, 448, 448), 
                                     "siglip":torch.zeros(N, 3, 448, 448),
                                     "sam":torch.zeros(N, 3, 1024, 1024),}
+        # add sample_id
+        data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
         return data_dict
