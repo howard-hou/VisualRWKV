@@ -8,7 +8,13 @@ def is_image_valid(image_path_list):
     error_list = []
     for img_path in image_path_list:
         try:
-            Image.open(img_path).convert('RGB')
+            img = Image.open(img_path).convert('RGB')
+            if img.size[0] < 10 or img.size[1] < 10:
+                error = (img_path, 'image_too_small')
+                error_list.append(error)
+            if img.size[0] * img.size[1] > 4096 * 4096:
+                error = (img_path, 'image_too_large')
+                error_list.append(error)
         except Exception as e:
             # dict of invalid images
             error = (img_path, str(e).strip().split()[0])
