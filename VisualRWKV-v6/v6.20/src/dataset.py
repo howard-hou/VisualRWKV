@@ -229,10 +229,8 @@ class MyDataset(Dataset):
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
             # 
-            conversations, num_images = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
-                                                                              num_image_paths=num_image_paths)
-            if num_images != len(image_paths):
-                rank_zero_warn(f"num_images in conv: {num_images}, num_image_paths: {len(image_paths)}")
+            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
+                                                                  num_image_paths=num_image_paths)
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
