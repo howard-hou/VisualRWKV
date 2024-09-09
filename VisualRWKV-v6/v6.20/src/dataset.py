@@ -31,7 +31,9 @@ def multi_image_collate_fn(batch):
     all_dino = torch.cat([x['images']['dino'] for x in batch if 'images' in x], dim=0)
     all_sam = torch.cat([x['images']['sam'] for x in batch if 'images' in x], dim=0)
     all_siglip = torch.cat([x['images']['siglip'] for x in batch if 'images' in x], dim=0)
-    images = {"dino": all_dino, "sam": all_sam, "siglip": all_siglip}
+    # the num of images of each sample
+    num_image_per_sample = [len(x['images']['dino']) for x in batch if 'images' in x]
+    images = {"dino": all_dino, "sam": all_sam, "siglip": all_siglip, 'num_image_per_sample': num_image_per_sample}
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
