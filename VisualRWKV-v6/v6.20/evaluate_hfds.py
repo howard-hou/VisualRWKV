@@ -35,7 +35,8 @@ def get_input_image_dict(image_list, image_processor):
 def eval_model(args):
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
-    model_name = model_path.parent.name
+    exp_name = model_path.parent.name
+    model_name = model_path.stem
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)

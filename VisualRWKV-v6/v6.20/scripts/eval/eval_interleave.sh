@@ -14,8 +14,11 @@ cd "$(dirname "$(dirname "$0")")/.."
 # get the name of the model without extension
 model_name=$(basename "${model_path}")
 model_name="${model_name%.*}"
+# get the dataset name
+dataset_name=$(basename "${dataset_path}")
 # 打印当前工作目录
 echo "Current working directory: $(pwd)"
+output_file=$parent_dir/$dataset_name/$model_name.jsonl
 
 # 使用basename命令获取父目录名称
 exp_name=$(basename "${parent_dir}")
@@ -26,6 +29,7 @@ echo "ctx_len: $ctx_len, proj_type: $proj_type, n_embd: $n_embd, n_layer: $n_lay
 echo "num_token_per_image: $num_token_per_image"
 echo "dataset_path: $dataset_path"
 echo "vision_tower_dir: $vision_tower_dir"
+echo "output file: $output_file"
 
 python evaluate_hfds.py \
     --ctx_len $ctx_len --proj_type $proj_type --n_embd $n_embd --n_layer $n_layer \
@@ -33,12 +37,6 @@ python evaluate_hfds.py \
     --model_path $model_path \
     --dataset_path $dataset_path \
     --num_token_per_image $num_token_per_image 
-
-
-# output_file=$parent_dir/$model_name/merge.jsonl
-
-# # Clear out the output file if it exists.
-# > "$output_file"
 
 
 # python eval/visualrwkv_eval.py $eval_dir/$SPLIT.jsonl $output_file
