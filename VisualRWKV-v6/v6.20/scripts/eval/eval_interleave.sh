@@ -39,4 +39,4 @@ python evaluate_hfds.py \
     --num_token_per_image $num_token_per_image 
 
 
-# python eval/visualrwkv_eval.py $eval_dir/$SPLIT.jsonl $output_file
+python eval/eval_interleave.py $output_file

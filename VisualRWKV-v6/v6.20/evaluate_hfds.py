@@ -33,6 +33,33 @@ def get_input_image_dict(image_list, image_processor):
     return image_dict
 
 
+def prepare_conversations(line):
+    if "question" in line:
+        input_text = line['question']
+
+        conv = Conversation(id=line['sample_id'], roles=["human", "gpt"], conversations=[])
+        conv.append_message(conv.roles[0], input_text)
+        conv.append_message(conv.roles[1], "")
+
+        conversations = conv.conversations
+    elif "conversations" in line:
+        conv = Conversation(id=line['sample_id'], roles=["human", "gpt"], conversations=[])
+        for msg in line["conversations"]:
+            if msg['from'] == "human":
+                conv.append_message(conv.roles[0], msg['value'])
+            elif msg['from'] == "gpt":
+                conv.append_message(conv.roles[1], msg['value'])
+            else:
+                raise ValueError(f"Unknown role {msg['from']}")
+        # if last message is from human, add an empty message from gpt
+        if msg['from'] == "human":
+            conv.append_message(conv.roles[1], "")
+        conversations = conv.conversations
+    else:
+        raise ValueError("Invalid input line, no 'question' or 'conversations' field")
+    return conversations                
+
+
 def eval_model(args):
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
@@ -66,14 +93,8 @@ def eval_model(args):
         image_dict = get_input_image_dict(image_list, image_processor)
         for k in image_dict:
             image_dict[k] = image_dict[k].bfloat16().to(args.device)
-        
-        input_text = line['question']
 
-        conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
-        conv.append_message(conv.roles[0], input_text)
-        conv.append_message(conv.roles[1], "")
-
-        conversations = conv.conversations
+        conversations = prepare_conversations(line)
 
         data_dict = preprocess(
             conversations,
@@ -118,6 +139,8 @@ def eval_model(args):
                               "model_id": model_name,
                               "metadata": {
                                   "sub_task": line.get("sub_task", None),
+                                  "question_type": line.get("question_type", None),
+                                  "answer": line.get("answer", None),
                               }}, ensure_ascii=False)
         out_file.write(out_str + "\n")
         # update progress bar
