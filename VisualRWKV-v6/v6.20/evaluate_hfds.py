@@ -18,6 +18,8 @@ from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation
 from src.config import VISION_TOWER_CHECKPOINT_NAMES
 
+dataset2subtask = {"multi_view_in_domain": ["ScanQA", "ALFRED", "nuscenes"]}
+
     
 def get_input_image_dict(image_list, image_processor):
     image_dict = {}
@@ -57,7 +59,13 @@ def prepare_conversations(line):
         conversations = conv.conversations
     else:
         raise ValueError("Invalid input line, no 'question' or 'conversations' field")
-    return conversations                
+    return conversations
+
+
+def is_sub_task_to_eval(line, sub_tasks_to_eval):
+    if sub_tasks_to_eval is None:
+        return True
+    return line.get("sub_task") in sub_tasks_to_eval
 
 
 def eval_model(args):
@@ -77,6 +85,8 @@ def eval_model(args):
     dataset = load_from_disk(args.dataset_path)
     if isinstance(dataset, dict):
         dataset = dataset["test"]
+    dataset_name = Path(args.dataset_path).name
+    sub_tasks_to_eval = dataset2subtask.get(dataset_name, None)
     # output to the same dir of the model
     dataset_path = Path(args.dataset_path)
     output_dir = model_path.parent / dataset_path.name
@@ -87,6 +97,8 @@ def eval_model(args):
     pbar = tqdm(total=len(dataset))
     update_every = len(dataset) // 100
     for i, line in enumerate(dataset):
+        if not is_sub_task_to_eval(line, sub_tasks_to_eval):
+            continue
         idx = line['sample_id']
         image_keys = [k for k in line.keys() if 'image' in k]
         image_list = [line[k] for k in image_keys if line[k] is not None]
