@@ -23,6 +23,7 @@ def get_input_image_dict(image_list, image_processor):
     image_dict = {}
     pixel_values = defaultdict(list)
     for image in image_list:
+        image = image.convert("RGB") # make sure it's RGB
         pixel_value = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
         for k in pixel_value:
             pixel_values[k].append(pixel_value[k])
