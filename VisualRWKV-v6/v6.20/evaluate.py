@@ -99,7 +99,13 @@ def get_input_image_dict(line, image_folder, image_processor):
         video_frames = sorted(video_folder.rglob("*.jpg"))
         num_frames = line['text'].count(DEFAULT_IMAGE_TOKEN)
         # uniform sampling
-        sampled_frames = video_frames[::len(video_frames) // num_frames]
+        if len(video_frames) <= num_frames:
+            sampled_frames = video_frames
+        else:
+            indices = np.linspace(0, len(video_frames) - 1, num_frames)
+            rounded_indices = np.round(indices).astype(int)
+            sampled_frames = [video_frames[i] for i in rounded_indices]
+        #
         pixel_values = defaultdict(list)
         for frame in sampled_frames:
             image = Image.open(frame).convert("RGB")
@@ -201,6 +207,7 @@ def eval_model(args):
         # update progress bar
         if i % update_every == 0 and i != 0:
             pbar.update(update_every)
+        torch.cuda.empty_cache()
         out_file.flush()
     out_file.close()
     pbar.close()
