@@ -149,7 +149,9 @@ def eval_model(args):
         conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
-        conversations = process_image_tokens_in_conversations(conv.conversations)
+        conversations = process_image_tokens_in_conversations(
+            conv.conversations,
+            num_image_paths=num_images,)
 
         data_dict = preprocess(
             conversations,

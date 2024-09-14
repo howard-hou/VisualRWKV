@@ -348,8 +348,9 @@ class MLPWithContextGating(nn.Module):
     def forward(self, x):
         # x: [B, T, D]
         x = self.proj(x)
-        gating = torch.sigmoid(self.gate(x))
-        return self.o_proj(x * gating)
+        #gating = torch.sigmoid(self.gate(x))
+        x = torch.relu(x)
+        return self.o_proj(x) #* gating)
 
 
 class MLPWithMultiheadAttentionGating(nn.Module):
