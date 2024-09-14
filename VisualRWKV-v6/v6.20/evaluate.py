@@ -75,6 +75,12 @@ def get_input_text(line, num_images):
     
 
 def get_input_image_dict(line, image_folder, image_processor):
+    # assert "image" in line or "video" in line, and not ("image" in line and "video" in line)
+    if "image" not in line and "video" not in line:
+        raise ValueError("Cannot find image or video in line: {}".format(line))
+    if "image" in line and "video" in line:
+        raise ValueError("Both image and video are found in line: {}".format(line))
+
     image_dict = {}
     if "image" in line:
         image = Image.open(image_folder /  line["image"]).convert("RGB")
@@ -83,6 +89,21 @@ def get_input_image_dict(line, image_folder, image_processor):
         pixel_values = defaultdict(list)
         for image in image_list:
             pixel_value = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
+            for k in pixel_value:
+                pixel_values[k].append(pixel_value[k])
+        # merge by key
+        for key in pixel_values:
+            image_dict[key] = torch.stack(pixel_values[key], dim=0)
+    if "video" in line:
+        video_folder = image_folder / line["video"]
+        video_frames = sorted(video_folder.rglob("*.jpg"))
+        num_frames = line['text'].count(DEFAULT_IMAGE_TOKEN)
+        # uniform sampling
+        sampled_frames = video_frames[::len(video_frames) // num_frames]
+        pixel_values = defaultdict(list)
+        for frame in sampled_frames:
+            image = Image.open(frame).convert("RGB")
+            pixel_value = image_processor(image)
             for k in pixel_value:
                 pixel_values[k].append(pixel_value[k])
         # merge by key
@@ -171,6 +192,7 @@ def eval_model(args):
                               "avg_prob": str(round(avg_prob, 3)),
                               "model_id": model_name,
                               "metadata": {
+                                  **line['metadata'],
                                   "image_file": line.get("image", None),
                               }}, ensure_ascii=False)
         out_file.write(out_str + "\n")
