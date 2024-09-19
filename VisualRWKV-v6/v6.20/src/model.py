@@ -19,6 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
+from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
 
 def __nop(ob):
     return ob
@@ -30,7 +31,18 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-
+########################################################################################################
+# FLA Kernel
+########################################################################################################
+# @torch.compile introduce bug, cannot use for torch < 2.5
+def RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u):
+    r = r.view(B,T,H,-1).transpose(1,2)
+    k = k.view(B,T,H,-1).transpose(1,2)
+    v = v.view(B,T,H,-1).transpose(1,2)
+    # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
+    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
+    o, _ = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=None, output_final_state=False)
+    return o.transpose(1,2).reshape(B,T,C)
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -190,7 +202,7 @@ class RWKV_Tmix_x060(MyModule):
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        x = RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         return self.jit_func_2(x, g)
 

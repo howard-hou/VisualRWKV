@@ -37,15 +37,6 @@ def multi_image_collate_fn(batch):
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
-def calc_num_images_to_add(num_local_images, num_image_paths, num_global_images):
-    residual_capacity = num_image_paths - num_global_images
-    if residual_capacity <= 0:
-        return 0
-    if num_local_images <= residual_capacity:
-        return num_local_images
-    return residual_capacity
-
-
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
     num_image_paths: int
@@ -56,7 +47,8 @@ def process_image_tokens_in_conversations(
     replace \n\n with \n
     make sure the number of image tokens is euqal to the number of image paths
     """
-    num_global_images = 0
+    num_global_images = sum([sentence['value'].count(DEFAULT_IMAGE_TOKEN) for sentence in conversations])
+    assert num_global_images == num_image_paths, f"num_global_images: {num_global_images}, num_image_paths: {num_image_paths}, not match."
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence['value']:
             # must count first, then replace
@@ -65,12 +57,10 @@ def process_image_tokens_in_conversations(
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
             if sentence['from'].lower() == "human":
-                num_images_to_add = calc_num_images_to_add(num_local_images, num_image_paths, num_global_images)
                 # always put image token at the beginning
-                image_prifix = "\n".join(num_images_to_add * [DEFAULT_IMAGE_TOKEN])
+                image_prifix = "\n".join(num_local_images * [DEFAULT_IMAGE_TOKEN])
                 sentence['value'] = image_prifix + '\n' + sentence['value']
             sentence['value'] = sentence['value'].strip()
-            num_global_images += num_local_images
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
 
@@ -185,9 +175,6 @@ class MyDataset(Dataset):
         self.data_size = len(self.list_data_dict)
         self.magic_prime = largest_3n_plus_2_prime(self.data_size)
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
-        # equation: max_image = (ctx_len - task_prompt_len) // (num_image_token + num_answer_token)
-        self.max_image = (args.ctx_len - 64) // (args.num_token_per_image + 15)
-        rank_zero_info(f"Only use the first {self.max_image} images, if not enough, please increase ctx len or decrease num tokens per image.")
 
     def __len__(self):
         return self.args.epoch_steps * self.args.micro_bsz
@@ -207,13 +194,11 @@ class MyDataset(Dataset):
         else: # when step >= self.magic_prime, means the second epoch
             sample = self.list_data_dict_reverse[sample_idx]
 
-        is_image_available = True
         if 'image' in sample:
             if isinstance(sample['image'], str):
                 sample['image'] = [sample['image']]
             image_folder = Path(args.image_folder)
             image_paths = [image_folder / image_name for image_name in sample['image']]
-            image_paths = image_paths[:self.max_image] # only use the first max_image images
             num_image_paths = len(image_paths)
             # try and except to handle the case where the image is not found or not readable
             try:
@@ -227,6 +212,7 @@ class MyDataset(Dataset):
                 merged_pixel_values = {}
                 for key in pixel_values:
                     merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
+                is_image_available = True
             except:
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
@@ -245,14 +231,16 @@ class MyDataset(Dataset):
             pad_token_id=0)
         
         # image exist in the data
-        if 'image' in sample and is_image_available:
-            data_dict['images'] = merged_pixel_values
-        else:
-            if 'image' in sample and not is_image_available:
-                N = len(image_paths)
-                data_dict['images'] = {"dino":torch.zeros(N, 3, 448, 448), 
-                                    "siglip":torch.zeros(N, 3, 448, 448),
-                                    "sam":torch.zeros(N, 3, 1024, 1024),}
+        if 'image' in sample:
+            if is_image_available:
+                data_dict['images'] = merged_pixel_values
+            else:
+                data_dict['images'] = {
+                    "dino":torch.zeros(num_image_paths, 3, 448, 448), 
+                    "siglip":torch.zeros(num_image_paths, 3, 448, 448), 
+                    "sam":torch.zeros(num_image_paths, 3, 1024, 1024)
+                    }
+
         # add sample_id
         data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
         return data_dict
