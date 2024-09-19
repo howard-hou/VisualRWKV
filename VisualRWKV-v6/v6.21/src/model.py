@@ -35,14 +35,14 @@ if os.environ["RWKV_JIT_ON"] == "1":
 # FLA Kernel
 ########################################################################################################
 # @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u):
+def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     r = r.view(B,T,H,-1).transpose(1,2)
     k = k.view(B,T,H,-1).transpose(1,2)
     v = v.view(B,T,H,-1).transpose(1,2)
     # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
     w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, _ = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=None, output_final_state=False)
-    return o.transpose(1,2).reshape(B,T,C)
+    o, final_state = chunk_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
+    return o.transpose(1,2).reshape(B,T,C), final_state
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -189,22 +189,22 @@ class RWKV_Tmix_x060(MyModule):
         return r, k, v, g, w
 
     @MyFunction
-    def jit_func_2(self, x, g):
+    def jit_func_2(self, x, g, s):
         B, T, C = x.size()
         x = x.view(B * T, C)
         
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
-        return x
+        return x, s
 
-    def forward(self, x):
+    def forward(self, x, s):
         B, T, C = x.size()
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x = RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        x, s = RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=s)
 
-        return self.jit_func_2(x, g)
+        return self.jit_func_2(x, g, s)
 
 ########################################################################################################
 
@@ -262,14 +262,15 @@ class Block(nn.Module):
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x):
+    def forward(self, x, s):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        x = x + self.att(self.ln1(x))
+        xx, s = self.att(self.ln1(x), s)
+        x = x + xx # skip connection
         x = x + self.ffn(self.ln2(x))
 
-        return x
+        return x, s
 
 
 class L2Wrap(torch.autograd.Function):
@@ -300,48 +301,6 @@ class RWKV(pl.LightningModule):
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
-
-    def configure_optimizers(self):
-        trainable_params = [p for p in self.parameters() if p.requires_grad]
-        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
-        if self.deepspeed_offload:
-            return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-        return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
-
-    @property
-    def deepspeed_offload(self) -> bool:
-        strategy = self.trainer.strategy
-        if isinstance(strategy, DeepSpeedStrategy):
-            cfg = strategy.config["zero_optimization"]
-            return cfg.get("offload_optimizer") or cfg.get("offload_param")
-        return False
-
-    def forward(self, x):
-        args = self.args
-        if args.dropout > 0:
-            x = self.drop0(x)
-
-        for block in self.blocks:
-            if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-
-        x = self.ln_out(x)
-        x = self.head(x)
-        return x
-
-    def training_step(self, batch, batch_idx):
-        idx, targets = batch
-        logits = self(idx)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-        return L2Wrap.apply(loss, logits)
-
-    def training_step_end(self, batch_parts):
-        if pl.__version__[0]!='2':
-            all = self.all_gather(batch_parts)
-            if self.trainer.is_global_zero:
-                self.trainer.my_loss_all = all
 
 
 class MLPWithContextGating(nn.Module):
@@ -430,10 +389,48 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets = self.preparing_embedding(samples)
-        # unidirectional forward
-        logits = self.rwkv(x)
+        x, targets, image_features = self.preparing_embedding(samples)
+        # convert image features to image states
+        image_states = self.forward_image_states(image_features)
+        # split the image states by sample
+        image_states = image_states.split(samples["images"]["num_image_per_sample"], dim=0)
+        # forward one sample at a time, to handle the variable number of images
+        logits = []
+        for i in range(len(x)):
+            logits.append(self.forward_one_sample(x[i:i+1, :, :], image_states[i]))
+        logits = torch.cat(logits, dim=0) # [B, T, vocab_size]
         return logits, targets
+
+    def forward_one_sample(self, x, image_states):
+        '''
+        one sample with N images
+        x: [1, T, D]
+        image_states: [N, n_layer, n_head, head_size, head_size]
+        '''
+        # repeat x to N
+        x = x.repeat(len(image_states), 1, 1) # [N, T, D]
+        # 第一种设计，每个image都和x进行交互，最后再求平均聚合起来
+        for i, block in enumerate(self.rwkv.blocks):
+            if self.args.grad_cp == 1:
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states[:, i])
+            else:
+                x, _ = block(x, image_states[:, i])
+        x = self.rwkv.ln_out(x.mean(0, keepdim=True)) # [1, T, D]
+        return self.rwkv.head(x)
+
+    def forward_image_states(self, x_emb):
+        image_states = [] # store the states of each block
+        for i, block in enumerate(self.rwkv.blocks):
+            if self.args.grad_cp == 1:
+                x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
+            else:
+                x_emb, state = block(x_emb, None)
+            image_states.append(state)
+
+        # reshape the image states [B, n_layer, ...]
+        image_states = torch.stack(image_states, dim=1)
+        return image_states
+
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
@@ -472,31 +469,12 @@ class VisualRWKV(pl.LightningModule):
         return self.proj(image_features)
    
     def preparing_embedding(self, samples):
-        if "images" not in samples:
-            return self.rwkv.emb(samples["input_ids"]), samples["labels"]
+        image_features_by_sample = []
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
-        image_features_by_sample = []
-        num_image_per_sample = samples["images"]["num_image_per_sample"]
-        start_index = 0
-        for num_image in num_image_per_sample:
-            image_features_by_sample.append(image_features[start_index:start_index + num_image])
-            start_index = start_index + num_image
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
-        B, L, D = input_embeds.shape
-        input_embeds = input_embeds.view(B * L, D)
-        input_ids = samples["input_ids"].view(B * L)
-        selected = (input_ids == IMAGE_TOKEN_INDEX)
-        selected_sum = selected.sum()
-        if selected_sum != B_IMG*L_IMG:
-            # truncate the image_features, wrong way to handle this, but it is fine for now
-            image_features = image_features[:selected_sum]
-            sample_id = ':::'.join(samples["sample_id"])
-            rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
-        # fill the image features to the input_embeds
-        input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"]
+        return input_embeds, samples["labels"], image_features
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
