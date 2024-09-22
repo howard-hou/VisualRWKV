@@ -390,17 +390,23 @@ class VisualRWKV(pl.LightningModule):
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
         N, T_IMG, _ = image_features.shape
+        if self.args.fusion_layer == 0:
+            image_features = image_features.mean(0, keepdim=True) # [1, T_IMG, D]
         # 假设bsz = 1，每个sample的images数量不同
-        x = x.repeat(N, 1, 1) # [N, T, D]
+        if self.args.fusion_layer != 0:
+            x = x.repeat(N, 1, 1) # [N, T, D]
         # concat [image_features, x] -> [N, T+T_IMG, D]
         x = torch.cat((image_features, x), dim=1)
         # 第一种设计，每个image都和x进行交互，最后再求平均聚合起来
-        for block in self.rwkv.blocks:
+        for i, block in enumerate(self.rwkv.blocks):
             if self.args.grad_cp == 1:
                 x = deepspeed.checkpointing.checkpoint(block, x)
             else:
                 x = block(x)
-        x = self.rwkv.ln_out(x.mean(0, keepdim=True)) # [1, T, D]
+            # fuse at the i-th layer
+            if self.args.fusion_layer == (i+1):
+                x = x.mean(0, keepdim=True) # [1, T+T_IMG, D]
+        x = self.rwkv.ln_out(x) # [1, T, D]
         logits = self.rwkv.head(x)[:, T_IMG:, :] # [1, T, V]
         return logits, targets
 

@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument("--fusion_layer", default=0, type=int, help="control the layer of fusion")
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
     parser = Trainer.add_argparse_args(parser)
