@@ -41,7 +41,7 @@ def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     v = v.view(B,T,H,-1).transpose(1,2)
     # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
     w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, final_state = chunk_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
+    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
     return o.transpose(1,2).reshape(B,T,C), final_state
 ########################################################################################################
 # CUDA Kernel
@@ -189,22 +189,22 @@ class RWKV_Tmix_x060(MyModule):
         return r, k, v, g, w
 
     @MyFunction
-    def jit_func_2(self, x, g, s):
+    def jit_func_2(self, x, g):
         B, T, C = x.size()
         x = x.view(B * T, C)
         
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
-        return x, s
+        return x
 
-    def forward(self, x, s):
+    def forward(self, x):
         B, T, C = x.size()
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x, s = RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=s)
+        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
-        return self.jit_func_2(x, g, s)
+        return self.jit_func_2(x, g)
 
 ########################################################################################################
 
@@ -262,15 +262,14 @@ class Block(nn.Module):
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x, s):
+    def forward(self, x):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        xx, s = self.att(self.ln1(x), s)
-        x = x + xx # skip connection
+        x = x + self.att(self.ln1(x))
         x = x + self.ffn(self.ln2(x))
 
-        return x, s
+        return x
 
 
 class L2Wrap(torch.autograd.Function):
@@ -390,48 +389,21 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        # convert image features to image states
-        image_states = self.forward_image_states(image_features)
-        # split the image states by sample
-        image_states = image_states.split(samples["images"]["num_image_per_sample"], dim=0)
-        # forward one sample at a time, to handle the variable number of images
-        logits = []
-        for i in range(len(x)):
-            logits.append(self.forward_one_sample(x[i:i+1, :, :], image_states[i]))
-        logits = torch.cat(logits, dim=0) # [B, T, vocab_size]
+        N, T_IMG, _ = image_features.shape
+        # 假设bsz = 1，每个sample的images数量不同
+        x = x.repeat(N, 1, 1) # [N, T, D]
+        # concat [image_features, x] -> [N, T+T_IMG, D]
+        x = torch.cat((image_features, x), dim=1)
+        # 第一种设计，每个image都和x进行交互，最后再求平均聚合起来
+        for block in self.rwkv.blocks:
+            if self.args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+        x = self.rwkv.ln_out(x.mean(0, keepdim=True)) # [1, T, D]
+        logits = self.rwkv.head(x)[:, T_IMG:, :] # [1, T, V]
         return logits, targets
 
-    def forward_one_sample(self, x, image_states):
-        '''
-        one sample with N images
-        x: [1, T, D]
-        image_states: [N, n_layer, n_head, head_size, head_size]
-        '''
-        # repeat x to N
-        x = x.repeat(len(image_states), 1, 1) # [N, T, D]
-        # 第一种设计，每个image都和x进行交互，最后再求平均聚合起来
-        for i, block in enumerate(self.rwkv.blocks):
-            if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states[:, i])
-            else:
-                x, _ = block(x, image_states[:, i])
-        x = self.rwkv.ln_out(x.mean(0, keepdim=True)) # [1, T, D]
-        return self.rwkv.head(x)
-
-    def forward_image_states(self, x_emb):
-        image_states = [] # store the states of each block
-        for i, block in enumerate(self.rwkv.blocks):
-            if self.args.grad_cp == 1:
-                x_emb, state = deepspeed.checkpointing.checkpoint(block, x_emb, None)
-            else:
-                x_emb, state = block(x_emb, None)
-            image_states.append(state)
-
-        # reshape the image states [B, n_layer, ...]
-        image_states = torch.stack(image_states, dim=1)
-        return image_states
-
-    
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
@@ -469,7 +441,6 @@ class VisualRWKV(pl.LightningModule):
         return self.proj(image_features)
    
     def preparing_embedding(self, samples):
-        image_features_by_sample = []
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
         ### prepare input token

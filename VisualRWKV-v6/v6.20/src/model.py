@@ -202,7 +202,7 @@ class RWKV_Tmix_x060(MyModule):
         H = self.n_head
 
         r, k, v, g, w = self.jit_func(x)
-        x = RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         return self.jit_func_2(x, g)
 

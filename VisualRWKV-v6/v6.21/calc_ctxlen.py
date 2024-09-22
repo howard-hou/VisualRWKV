@@ -31,7 +31,6 @@ def truncate_labels(input_ids, labels, max_len):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("data_file", type=str, default="data.json")
-    parser.add_argument("--image_position", type=str, default="first")
     parser.add_argument("--image_tokens", type=int, default=None)
     parser.add_argument("--max_ctx_len", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
@@ -49,7 +48,7 @@ if __name__ == "__main__":
     for data in tqdm(data_list):
         if 'image' in data:
             conversations = process_image_tokens_in_conversations(
-                copy.deepcopy(data["conversations"]), image_position=args.image_position)
+                copy.deepcopy(data["conversations"]))
         else:
             conversations = process_tokens_in_conversations(
                 copy.deepcopy(data["conversations"]))
@@ -60,6 +59,7 @@ if __name__ == "__main__":
             has_image=('image' in data),
             ctx_len=None,
             pad_token_id=0,
+            num_token_per_image=64,
             do_pad_to_max_length=False)
 
         data_dict["input_ids"] = data_dict["input_ids"].tolist()
