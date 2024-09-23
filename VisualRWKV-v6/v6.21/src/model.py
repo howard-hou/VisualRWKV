@@ -406,8 +406,23 @@ class VisualRWKV(pl.LightningModule):
             # fuse at the i-th layer
             if self.args.fusion_layer == (i+1):
                 x = x.mean(0, keepdim=True) # [1, T+T_IMG, D]
-        x = self.rwkv.ln_out(x) # [1, T, D]
-        logits = self.rwkv.head(x)[:, T_IMG:, :] # [1, T, V]
+        x = x[:, T_IMG:, :] # [N or 1, T, D] to save computation
+        x = self.rwkv.ln_out(x) # [N or 1, T, D]
+        logits = self.rwkv.head(x) # [N or 1, T, V]
+        if self.args.fusion_layer == -1:
+            # use Entropy Weight Method
+            # compute the entropy of the logits
+            entropy = -torch.sum(F.softmax(logits, dim=-1) * F.log_softmax(logits, dim=-1), dim=-1) # [N, T]
+            # normalize entropy to [0, 1]
+            entropy = entropy / math.log(logits.size(-1))
+            # larger entropy means more uncertain -> smaller weight, information gain
+            gain = (1 - entropy).mean(1) * 3 # [N] -> [0, 3]
+            # entropy weight by softmax
+            weight = torch.softmax(gain, dim=0).view(N, 1, 1) # [N, 1, 1]
+            #weight = (gain / gain.sum(0)).view(N, 1, 1) #[N, 1, 1]
+            # apply weight to logits, reduce to [1, T, V]
+            logits = (weight * logits).sum(0, keepdim=True)
+
         return logits, targets
 
     def training_step(self, batch, batch_idx):
