@@ -19,7 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
+
 
 def __nop(ob):
     return ob
@@ -31,18 +31,6 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-########################################################################################################
-# FLA Kernel
-########################################################################################################
-# @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
-    r = r.view(B,T,H,-1).transpose(1,2)
-    k = k.view(B,T,H,-1).transpose(1,2)
-    v = v.view(B,T,H,-1).transpose(1,2)
-    # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -161,6 +149,8 @@ class RWKV_Tmix_x060(MyModule):
         self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
 
+        self.mos_gate = nn.Linear(args.n_embd, 1, bias=False)
+
     @MyFunction
     def jit_func(self, x):
         B, T, C = x.size()
@@ -191,20 +181,36 @@ class RWKV_Tmix_x060(MyModule):
     @MyFunction
     def jit_func_2(self, x, g):
         B, T, C = x.size()
-        x = x.view(B * T, C)
+        x = x.reshape(B * T, C)
         
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
         return x
 
-    def forward(self, x):
-        B, T, C = x.size()
+    def forward(self, x, img):
+        _, T, C = x.size() # [1, T, C]
         H = self.n_head
+        N, T_IMG, _ = img.size()
 
-        r, k, v, g, w = self.jit_func(x)
-        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        # Repeat x to match the number of images
+        x = x.repeat(N, 1, 1) # [num_states, T, C]
+        # Gating network to determine image state mixture weight for each token
+        mixture_weight = torch.softmax(self.mos_gate(x), dim=0)  # [num_states, T, 1]
+        
+        # concat image features to x
+        x_img = torch.cat((img, x), dim=1)
+        r, k, v, g, w = self.jit_func(x_img)
+        x_img = RUN_CUDA_RWKV6(N, T_IMG+T, C, H, r, k, v, w, u=self.time_faaaa)
 
-        return self.jit_func_2(x, g)
+        # Split x_img back to image and x
+        img, g_img = x_img[:, :T_IMG, :], g[:, :T_IMG, :]
+        x, g_x = x_img[:, T_IMG:, :],  g[:, T_IMG:, :]
+ 
+        # apply mixture of states to x
+        x = (x * mixture_weight).sum(0, keepdim=True)  # [1, T, C]
+        g_x = (g_x * mixture_weight).sum(0, keepdim=True)  # [1, T, C]
+
+        return self.jit_func_2(x, g_x), self.jit_func_2(img, g_img)
 
 ########################################################################################################
 
@@ -262,14 +268,20 @@ class Block(nn.Module):
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x):
+    def forward(self, x, img):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        x = x + self.att(self.ln1(x))
+        # time-mixing
+        x2, img2 = self.att(self.ln1(x), self.ln1(img))
+        x = x + x2 # skip connection for text
+        img = img + img2 # skip connection for img
+        
+        # channel-mixing
         x = x + self.ffn(self.ln2(x))
+        img = img + self.ffn(self.ln2(img))
 
-        return x
+        return x, img
 
 
 class L2Wrap(torch.autograd.Function):
@@ -388,41 +400,16 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets, image_features = self.preparing_embedding(samples)
-        N, T_IMG, _ = image_features.shape
-        if self.args.fusion_layer == 0:
-            image_features = image_features.mean(0, keepdim=True) # [1, T_IMG, D]
-        # 假设bsz = 1，每个sample的images数量不同
-        if self.args.fusion_layer != 0:
-            x = x.repeat(N, 1, 1) # [N, T, D]
-        # concat [image_features, x] -> [N, T+T_IMG, D]
-        x = torch.cat((image_features, x), dim=1)
-        # 第一种设计，每个image都和x进行交互，最后再求平均聚合起来
-        for i, block in enumerate(self.rwkv.blocks):
+        x, targets, img = self.preparing_embedding(samples)
+        # mixtures of image states
+        for block in self.rwkv.blocks:
             if self.args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
+                x, img = deepspeed.checkpointing.checkpoint(block, x, img)
             else:
-                x = block(x)
-            # fuse at the i-th layer
-            if self.args.fusion_layer == (i+1):
-                x = x.mean(0, keepdim=True) # [1, T+T_IMG, D]
-        x = x[:, T_IMG:, :] # [N or 1, T, D] to save computation
+                x, img = block(x, img)
+
         x = self.rwkv.ln_out(x) # [N or 1, T, D]
         logits = self.rwkv.head(x) # [N or 1, T, V]
-        if self.args.fusion_layer == -1:
-            # use Entropy Weight Method
-            # compute the entropy of the logits
-            entropy = -torch.sum(F.softmax(logits, dim=-1) * F.log_softmax(logits, dim=-1), dim=-1) # [N, T]
-            # normalize entropy to [0, 1]
-            entropy = entropy / math.log(logits.size(-1))
-            # larger entropy means more uncertain -> smaller weight, information gain
-            gain = (1 - entropy).mean(1) * 3 # [N] -> [0, 3]
-            # entropy weight by softmax
-            weight = torch.softmax(gain, dim=0).view(N, 1, 1) # [N, 1, 1]
-            #weight = (gain / gain.sum(0)).view(N, 1, 1) #[N, 1, 1]
-            # apply weight to logits, reduce to [1, T, V]
-            logits = (weight * logits).sum(0, keepdim=True)
-
         return logits, targets
 
     def training_step(self, batch, batch_idx):
