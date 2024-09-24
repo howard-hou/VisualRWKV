@@ -19,7 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-
+from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
 
 def __nop(ob):
     return ob
@@ -31,6 +31,18 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
+########################################################################################################
+# FLA Kernel
+########################################################################################################
+# @torch.compile introduce bug, cannot use for torch < 2.5
+def RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u):
+    r = r.view(B,T,H,-1).transpose(1,2)
+    k = k.view(B,T,H,-1).transpose(1,2)
+    v = v.view(B,T,H,-1).transpose(1,2)
+    # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
+    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
+    o, _ = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=None, output_final_state=False)
+    return o.transpose(1,2).reshape(B,T,C)
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -149,8 +161,6 @@ class RWKV_Tmix_x060(MyModule):
         self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
 
-        #self.mos_gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-
     @MyFunction
     def jit_func(self, x):
         B, T, C = x.size()
@@ -181,7 +191,7 @@ class RWKV_Tmix_x060(MyModule):
     @MyFunction
     def jit_func_2(self, x, g):
         B, T, C = x.size()
-        x = x.reshape(B * T, C)
+        x = x.view(B * T, C)
         
         x = self.ln_x(x).view(B, T, C)
         x = self.output(x * g)
@@ -195,34 +205,6 @@ class RWKV_Tmix_x060(MyModule):
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         return self.jit_func_2(x, g)
-
-
-    # def forward(self, x, img):
-    #     _, T, C = x.size() # [1, T, C]
-    #     H = self.n_head
-    #     N, T_IMG, _ = img.size()
-    #     # # Gating network to determine image state mixture weight for each token
-    #     x_q = self.mos_gate(x) # [1, T, C]
-    #     att = (x_q @ img.permute(0, 2, 1)) * (C ** -0.5) # [N, T, T_IMG]
-    #     att = att.sum(-1, keepdim=True).softmax(0) # [N, T, 1]
-
-    #     # Repeat x to match the number of images
-    #     x = x.repeat(N, 1, 1) # [num_states, T, C]
-        
-    #     # concat image features to x
-    #     x_img = torch.cat((img, x), dim=1)
-    #     r, k, v, g, w = self.jit_func(x_img)
-    #     x_img = RUN_CUDA_RWKV6(N, T_IMG+T, C, H, r, k, v, w, u=self.time_faaaa)
-
-    #     # Split x_img back to image and x
-    #     img, g_img = x_img[:, :T_IMG, :], g[:, :T_IMG, :]
-    #     x, g_x = x_img[:, T_IMG:, :],  g[:, T_IMG:, :]
- 
-    #     # apply mixture of states to x
-    #     x = (x * att).sum(0, keepdim=True)  # [1, T, C]
-    #     g_x = (g_x * att).sum(0, keepdim=True)  # [1, T, C]
-
-    #     return self.jit_func_2(x, g_x), self.jit_func_2(img, g_img)
 
 ########################################################################################################
 
@@ -279,7 +261,7 @@ class Block(nn.Module):
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
-
+        
     def forward(self, x):
         if self.layer_id == 0:
             x = self.ln0(x)
@@ -288,21 +270,6 @@ class Block(nn.Module):
         x = x + self.ffn(self.ln2(x))
 
         return x
-        
-    # def forward(self, x, img):
-    #     if self.layer_id == 0:
-    #         x = self.ln0(x)
-
-    #     # time-mixing
-    #     x2, img2 = self.att(self.ln1(x), self.ln1(img))
-    #     x = x + x2 # skip connection for text
-    #     img = img + img2 # skip connection for img
-        
-    #     # channel-mixing
-    #     x = x + self.ffn(self.ln2(x))
-    #     img = img + self.ffn(self.ln2(img))
-
-    #     return x, img
 
 
 class L2Wrap(torch.autograd.Function):
@@ -423,15 +390,15 @@ class VisualRWKV(pl.LightningModule):
     def forward(self, samples):
         x, targets, img = self.preparing_embedding(samples)
         N, T_IMG, D_IMG = img.size()
-        img = img.view(1, N * T_IMG, D_IMG)
-        x = torch.cat((img, x), dim=1) # [1, N*T_IMG+T, D]
+        img = img.mean(0, keepdim=True) # [1, T_IMG, D]
+        x = torch.cat((img, x), dim=1) # [1, T_IMG+T, D]
         # mixtures of image states
         for block in self.rwkv.blocks:
             if self.args.grad_cp == 1:
                 x = deepspeed.checkpointing.checkpoint(block, x)
             else:
                 x = block(x)
-        x = x[:, N*T_IMG:, :] # [1, T, D]
+        x = x[:, T_IMG:, :] # [1, T, D]
         x = self.rwkv.ln_out(x) # [N or 1, T, D]
         logits = self.rwkv.head(x) # [N or 1, T, V]
         return logits, targets
