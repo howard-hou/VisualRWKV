@@ -35,14 +35,14 @@ if os.environ["RWKV_JIT_ON"] == "1":
 # FLA Kernel
 ########################################################################################################
 # @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6(B, T, C, H, r, k, v, w, u):
+def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     r = r.view(B,T,H,-1).transpose(1,2)
     k = k.view(B,T,H,-1).transpose(1,2)
     v = v.view(B,T,H,-1).transpose(1,2)
     # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
     w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, _ = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=None, output_final_state=False)
-    return o.transpose(1,2).reshape(B,T,C)
+    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
+    return o.transpose(1,2).reshape(B,T,C), final_state
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -102,7 +102,7 @@ def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
 
 ########################################################################################################
 
-class RWKV_Tmix_x060(MyModule):
+class RWKV_Tmix_x060_BASE(MyModule):
     def __init__(self, args, layer_id):
         super().__init__()
         self.args = args
@@ -205,7 +205,45 @@ class RWKV_Tmix_x060(MyModule):
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         return self.jit_func_2(x, g)
+    
 
+class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
+    def __init__(self, args, layer_id):
+        super().__init__(args, layer_id)
+
+    @MyFunction
+    def jit_func_2(self, x, g, s):
+        B, T, C = x.size()
+        x = x.view(B * T, C)
+        
+        x = self.ln_x(x).view(B, T, C)
+        x = self.output(x * g)
+        return x, s
+
+    def forward(self, x, s):
+        B, T, C = x.size()
+        H = self.n_head
+
+        r, k, v, g, w = self.jit_func(x)
+        x, s = RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=s)
+
+        return self.jit_func_2(x, g, s)
+
+
+class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
+    def __init__(self, args, layer_id):
+        super().__init__(args, layer_id)
+        self.query = nn.Linear(args.n_embd, args.dim_att, bias=False)
+
+    def forward(self, x, s_img):
+        B, T, C = x.size()
+        H = self.n_head
+
+        r, k, v, g, w = self.jit_func(x)
+        q = self.query(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
+        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+
+        return self.jit_func_2(x, g)
 ########################################################################################################
 
 class RWKV_CMix_x060(MyModule):
@@ -270,6 +308,36 @@ class Block(nn.Module):
         x = x + self.ffn(self.ln2(x))
 
         return x
+    
+
+class BlockState(nn.Module):
+    def __init__(self, args, layer_id):
+        super().__init__()
+        self.args = args
+        self.layer_id = layer_id
+
+        self.ln1 = nn.LayerNorm(args.n_embd)
+        self.ln2 = nn.LayerNorm(args.n_embd)
+
+        if self.layer_id == 0:
+            self.ln0 = nn.LayerNorm(args.n_embd)
+
+        self.att = RWKV_Tmix_x060_STATE(args, layer_id)
+        self.ffn = RWKV_CMix_x060(args, layer_id)
+
+        if args.dropout > 0:
+            self.drop0 = nn.Dropout(p = args.dropout)
+            self.drop1 = nn.Dropout(p = args.dropout)
+        
+    def forward(self, x, s):
+        if self.layer_id == 0:
+            x = self.ln0(x)
+
+        xx, s = self.att(self.ln1(x), s)
+        x = x + xx # skip connection
+        x = x + self.ffn(self.ln2(x))
+
+        return x, s
 
 
 class L2Wrap(torch.autograd.Function):
@@ -302,6 +370,7 @@ class RWKV(pl.LightningModule):
             self.drop0 = nn.Dropout(p = args.dropout)
 
 
+
 class MLPWithContextGating(nn.Module):
     def __init__(self, in_dim, n_embd):
         super().__init__()
@@ -315,6 +384,25 @@ class MLPWithContextGating(nn.Module):
         x = self.proj(x)
         gating = torch.sigmoid(self.gate(x))
         return self.o_proj(x * gating)
+    
+
+class ImageStateEncoder(MyModule):
+    '''
+    RWKV time-mix encoder for image features
+    '''
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.blocks = nn.ModuleList([BlockState(args, i) for i in range(1)])
+        self.ln_in = nn.LayerNorm(args.n_embd)
+
+    def forward(self, x):
+        x = self.ln_in(x)
+
+        for block in self.blocks:
+            x, s = block(x, s=None)
+
+        return s
 
 
 class VisualRWKV(pl.LightningModule):
@@ -331,6 +419,7 @@ class VisualRWKV(pl.LightningModule):
         else:
             self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
+        self.state_encoder = ImageStateEncoder(args)
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
@@ -388,21 +477,12 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets, img = self.preparing_embedding(samples)
-        N, T_IMG, D_IMG = img.size()
-        img = img.mean(0, keepdim=True) # [1, T_IMG, D]
-        x = torch.cat((img, x), dim=1) # [1, T_IMG+T, D]
-        # mixtures of image states
-        for block in self.rwkv.blocks:
-            if self.args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-        x = x[:, T_IMG:, :] # [1, T, D]
-        x = self.rwkv.ln_out(x) # [N or 1, T, D]
-        logits = self.rwkv.head(x) # [N or 1, T, V]
+        x, targets, image_features = self.preparing_embedding(samples)
+        image_states = self.state_encoder(image_features)
+        # 
+        logits = self.rwkv(x)
         return logits, targets
-
+    
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
@@ -440,11 +520,27 @@ class VisualRWKV(pl.LightningModule):
         return self.proj(image_features)
    
     def preparing_embedding(self, samples):
+        if "images" not in samples:
+            return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
+        B_IMG, L_IMG, D_IMG = image_features.shape
+        selected_image_features = image_features.view(-1, D_IMG)
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
-        return input_embeds, samples["labels"], image_features
+        B, L, D = input_embeds.shape
+        input_embeds = input_embeds.view(B * L, D)
+        input_ids = samples["input_ids"].view(B * L)
+        selected = (input_ids == IMAGE_TOKEN_INDEX)
+        selected_sum = selected.sum()
+        if selected_sum != B_IMG*L_IMG:
+            # truncate the image_features, wrong way to handle this, but it is fine for now
+            selected_image_features = selected_image_features[:selected_sum]
+            sample_id = ':::'.join(samples["sample_id"])
+            rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
+        # fill the image features to the input_embeds
+        input_embeds[selected] = selected_image_features
+        return input_embeds.view(B, L, D), samples["labels"], image_features
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
