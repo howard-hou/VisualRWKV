@@ -149,7 +149,7 @@ class RWKV_Tmix_x060(MyModule):
         self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
 
-        self.mos_gate = nn.Linear(args.n_embd, 1, bias=False)
+        self.mos_gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
 
     @MyFunction
     def jit_func(self, x):
@@ -194,8 +194,6 @@ class RWKV_Tmix_x060(MyModule):
 
         # Repeat x to match the number of images
         x = x.repeat(N, 1, 1) # [num_states, T, C]
-        # Gating network to determine image state mixture weight for each token
-        mixture_weight = torch.softmax(self.mos_gate(x), dim=0)  # [num_states, T, 1]
         
         # concat image features to x
         x_img = torch.cat((img, x), dim=1)
@@ -205,6 +203,9 @@ class RWKV_Tmix_x060(MyModule):
         # Split x_img back to image and x
         img, g_img = x_img[:, :T_IMG, :], g[:, :T_IMG, :]
         x, g_x = x_img[:, T_IMG:, :],  g[:, T_IMG:, :]
+
+        # Gating network to determine image state mixture weight for each token
+        mixture_weight = torch.softmax(self.mos_gate(x), dim=0)  # [num_states, T, 1]
  
         # apply mixture of states to x
         x = (x * mixture_weight).sum(0, keepdim=True)  # [1, T, C]
