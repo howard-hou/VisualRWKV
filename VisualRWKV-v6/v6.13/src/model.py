@@ -498,6 +498,7 @@ class VisualRWKV(pl.LightningModule):
     def encode_images(self, images):
         dino_patches, siglip_patches, sam_patches = self.vit(images)
         image_features = fuse_image_features(dino_patches, siglip_patches, sam_patches)
+        torch.cuda.empty_cache()
         return self.proj(image_features)
     
     def get_max_image_token_indice(self, samples):

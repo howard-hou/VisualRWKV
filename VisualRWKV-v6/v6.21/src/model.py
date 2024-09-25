@@ -538,7 +538,7 @@ class VisualRWKV(pl.LightningModule):
     def encode_images(self, images: dict, minibatch_size=4) -> torch.Tensor:
         '''
         mini-batch image feature extraction:
-        Using pure feature input, RWKV-1.6B only occupies 9GB of video memory, but using image input occupies 40GB of video memory. 
+        load feature from disk, RWKV-1.6B only occupies 9GB of GPU memory, but computing feature occupies 40GB of GPU memory. 
         This is because there are many intermediate variables and caches during the feature extraction process. 
         Therefore, images are input in mini-batches, where only a portion of the image features are extracted at a time, 
         then the cache is cleared, and then they are concat together.
