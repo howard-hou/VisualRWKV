@@ -233,14 +233,15 @@ class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
 class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
-        self.query = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.read = nn.Linear(args.n_embd, args.dim_att, bias=False)
 
     def forward(self, x, s_img):
         B, T, C = x.size()
         H = self.n_head
         
         r, k, v, g, w = self.jit_func(x)
-        q = self.query(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
+
+        q = self.read(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
