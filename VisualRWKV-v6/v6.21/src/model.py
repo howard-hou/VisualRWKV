@@ -35,7 +35,7 @@ if os.environ["RWKV_JIT_ON"] == "1":
 # FLA Kernel
 ########################################################################################################
 # @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
+def RUN_FLA_RWKV6_STATE(B: int, T: int, C: int, H: int, r, k, v, w, u, s):
     r = r.view(B,T,H,-1).transpose(1,2)
     k = k.view(B,T,H,-1).transpose(1,2)
     v = v.view(B,T,H,-1).transpose(1,2)
@@ -238,10 +238,14 @@ class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
     def forward(self, x, s_img):
         B, T, C = x.size()
         H = self.n_head
-
+        
         r, k, v, g, w = self.jit_func(x)
         q = self.query(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
+
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+
+        read_out = q @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
+        x = x + read_out.transpose(1,2).reshape(B,T,C)
 
         return self.jit_func_2(x, g)
 ########################################################################################################
@@ -293,21 +297,21 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(args.n_embd)
 
-        self.att = RWKV_Tmix_x060(args, layer_id)
+        self.att = RWKV_Tmix_x060_CROSS(args, layer_id)
         self.ffn = RWKV_CMix_x060(args, layer_id)
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x):
+    def forward(self, x, s):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        x = x + self.att(self.ln1(x))
+        x = x + self.att(self.ln1(x), s)
         x = x + self.ffn(self.ln2(x))
 
-        return x
+        return x, s
     
 
 class BlockState(nn.Module):
@@ -480,7 +484,14 @@ class VisualRWKV(pl.LightningModule):
         x, targets, image_features = self.preparing_embedding(samples)
         image_states = self.state_encoder(image_features)
         # 
-        logits = self.rwkv(x)
+        for i, block in enumerate(self.rwkv.blocks):
+            if self.args.grad_cp == 1:
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
+            else:
+                x, _ = block(x, image_states)
+
+        x = self.rwkv.ln_out(x)
+        logits = self.rwkv.head(x) # [B, T, V]
         return logits, targets
     
     def training_step(self, batch, batch_idx):
@@ -540,7 +551,24 @@ class VisualRWKV(pl.LightningModule):
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = selected_image_features
-        return input_embeds.view(B, L, D), samples["labels"], image_features
+        # pack image features
+        packed_image_features = self.pack_image_features(image_features, samples["images"]['num_image_per_sample'])
+        return input_embeds.view(B, L, D), samples["labels"], packed_image_features
+
+    def pack_image_features(self, image_features, num_image_per_sample):
+        ''' pack image features to the same length '''
+        max_num_image = max(num_image_per_sample)
+        max_len = max_num_image * self.args.num_token_per_image
+        # init with zeros
+        packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
+                                        device=image_features.device, dtype=image_features.dtype)
+        # split
+        image_features = image_features.split(num_image_per_sample, dim=0)
+        for i, feat_tup in enumerate(image_features):
+            image_feature = torch.cat(list(feat_tup), dim=0)
+            packed_image_features[i, -image_feature.size(0):] = image_feature # left padding
+        return packed_image_features
+
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
