@@ -427,7 +427,7 @@ class VisualRWKV(pl.LightningModule):
         self.state_encoder = ImageStateEncoder(args)
 
     def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
@@ -459,6 +459,15 @@ class VisualRWKV(pl.LightningModule):
 
     def freeze_proj(self):
         self.proj.requires_grad_(False)
+
+    def enable_state_encoder_pretrain_mode(self):
+        # 1. freeze the RWKV model
+        self.requires_grad_(False)
+        # 2. unfreeze the state encoder
+        self.state_encoder.requires_grad_(True)
+        # 3. unfreeze the readout layer in blocks
+        for block in self.rwkv.blocks:
+            block.att.read.requires_grad_(True)
 
     def configure_optimizers(self):
         zero_weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) < 2 and p.requires_grad]
@@ -526,8 +535,27 @@ class VisualRWKV(pl.LightningModule):
         image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
         return image_features
     
-    def encode_images(self, images):
-        image_features = self.vit(images)
+    def encode_images(self, images: dict, minibatch_size=4) -> torch.Tensor:
+        '''
+        mini-batch image feature extraction:
+        Using pure feature input, RWKV-1.6B only occupies 9GB of video memory, but using image input occupies 40GB of video memory. 
+        This is because there are many intermediate variables and caches during the feature extraction process. 
+        Therefore, images are input in mini-batches, where only a portion of the image features are extracted at a time, 
+        then the cache is cleared, and then they are concat together.
+        '''
+        # mini-batch: split images every minibatch_size images equally
+        N = len(images['siglip'])
+        if N <= minibatch_size:
+            image_features = self.vit(images).detach()
+            torch.cuda.empty_cache()
+        else:
+            image_features = []
+            for i in range(0, N, minibatch_size):
+                minibatch_images = {k: v[i:i+minibatch_size] for k, v in images.items()}
+                minibatch_features = self.vit(minibatch_images).detach()
+                torch.cuda.empty_cache()
+                image_features.append(minibatch_features)
+            image_features = torch.cat(image_features, dim=0)
         image_features = self.adaptive_pooling(image_features)
         return self.proj(image_features)
    

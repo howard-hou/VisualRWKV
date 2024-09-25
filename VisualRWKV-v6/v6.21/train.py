@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
+    parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
@@ -149,7 +150,7 @@ if __name__ == "__main__":
     if args.precision == "fp16":
         rank_zero_info("\n\nNote: you are using fp16 (might overflow). Try bf16 / tf32 for stable training.\n\n")
 
-    os.environ["RWKV_JIT_ON"] = "1"
+    os.environ["RWKV_JIT_ON"] = "0"
     if "deepspeed_stage_3" in args.strategy:
         os.environ["RWKV_JIT_ON"] = "0"
 
@@ -181,7 +182,7 @@ if __name__ == "__main__":
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()
     if args.model_path:
-        raw_model = torch.load(args.model_path, map_location='cpu')
+        raw_model = torch.load(args.model_path, map_location='cpu', weights_only=True)
         # use pos_embed from pretrained model
         if "vit.dino_featurizer.pos_embed" in raw_model:
             del raw_model["vit.dino_featurizer.pos_embed"]
@@ -193,6 +194,8 @@ if __name__ == "__main__":
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
+    if args.enable_state_encoder_pretrain_mode > 0:
+        model.enable_state_encoder_pretrain_mode()
     model.freeze_emb() # freeze emb all the time
 
     # init training data

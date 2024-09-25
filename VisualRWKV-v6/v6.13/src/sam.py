@@ -496,7 +496,7 @@ def _build_sam(
         )
     
     if checkpoint is not None:
-        state_dict = torch.load(checkpoint)
+        state_dict = torch.load(checkpoint, weights_only=True)
         new_state_dict = {}
         for k in list(state_dict.keys()):
             if k.startswith('image_encoder.'):
