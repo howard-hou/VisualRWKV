@@ -234,6 +234,10 @@ class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
         self.read = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.read_gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        # init read gate to 0
+        self.read_gate.weight.data.zero_()
+        self.gate_logit_normalizer = 8
 
     def forward(self, x, s_img):
         B, T, C = x.size()
@@ -242,11 +246,14 @@ class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
         r, k, v, g, w = self.jit_func(x)
 
         q = self.read(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
+        # push gate close to 0 at the beginning, so logit is negative( 0 - gate_logit_normalizer)
+        q_gate = (self.read_gate(x) - self.gate_logit_normalizer).sigmoid().view(B,T,H,-1).transpose(1,2)
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         read_out = q @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        x = x + read_out.transpose(1,2).reshape(B,T,C)
+        x = x.view(B, T, H, C//H).transpose(1,2) * (1 - q_gate) + read_out * q_gate
+        x = x.transpose(1,2).reshape(B, T, C)
 
         return self.jit_func_2(x, g)
 ########################################################################################################
