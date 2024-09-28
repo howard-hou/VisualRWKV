@@ -556,7 +556,7 @@ class VisualRWKV(pl.LightningModule):
         # mini-batch: split images every minibatch_size images equally
         N = len(images['siglip'])
         if N <= minibatch_size:
-            image_features = self.vit(images).detach()
+            image_features_orig = self.vit(images).detach()
             torch.cuda.empty_cache()
         else:
             image_features = []
@@ -565,17 +565,17 @@ class VisualRWKV(pl.LightningModule):
                 minibatch_features = self.vit(minibatch_images).detach()
                 torch.cuda.empty_cache()
                 image_features.append(minibatch_features)
-            image_features = torch.cat(image_features, dim=0)
-        image_features = self.adaptive_pooling(image_features)
-        return self.proj(image_features)
+            image_features_orig = torch.cat(image_features, dim=0)
+        image_features_pooled = self.adaptive_pooling(image_features_orig)
+        return self.proj(image_features_pooled), self.proj(image_features_orig)
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
-        image_features  = self.encode_images(samples["images"])
-        B_IMG, L_IMG, D_IMG = image_features.shape
-        selected_image_features = image_features.view(-1, D_IMG)
+        image_features_pooled, image_features_orig = self.encode_images(samples["images"])
+        B_IMG, L_IMG, D_IMG = image_features_pooled.shape
+        selected_image_features = image_features_pooled.view(-1, D_IMG)
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
         B, L, D = input_embeds.shape
@@ -591,13 +591,13 @@ class VisualRWKV(pl.LightningModule):
         # fill the image features to the input_embeds
         input_embeds[selected] = selected_image_features
         # pack image features
-        packed_image_features = self.pack_image_features(image_features, samples["images"]['num_image_per_sample'])
+        packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'])
         return input_embeds.view(B, L, D), samples["labels"], packed_image_features
 
     def pack_image_features(self, image_features, num_image_per_sample):
         ''' pack image features to the same length '''
         max_num_image = max(num_image_per_sample)
-        max_len = max_num_image * self.args.num_token_per_image
+        max_len = max_num_image * image_features.shape[1]
         # init with zeros
         packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
                                         device=image_features.device, dtype=image_features.dtype)

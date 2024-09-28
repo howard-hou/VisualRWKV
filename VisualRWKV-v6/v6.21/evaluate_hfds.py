@@ -115,7 +115,10 @@ def eval_model(args):
             print("cur_prompt: ", cur_prompt)
             print("num_input_images: ", len(image_list))
             for k in image_dict:
-                print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+                if isinstance(image_dict[k], torch.Tensor):
+                    print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+                else:
+                    print(f"{k}: {image_dict[k]}")
 
         with torch.inference_mode():
             output_ids, output_logits, output_probs = model.generate(
