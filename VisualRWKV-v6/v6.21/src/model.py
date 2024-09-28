@@ -500,7 +500,10 @@ class VisualRWKV(pl.LightningModule):
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
         image_states = self.state_encoder(image_features)
-        # 
+        logits = self.forward_with_image_states(x, image_states)
+        return logits, targets
+    
+    def forward_with_image_states(self, x, image_states):
         for i, block in enumerate(self.rwkv.blocks):
             if self.args.grad_cp == 1:
                 x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
@@ -509,7 +512,7 @@ class VisualRWKV(pl.LightningModule):
 
         x = self.rwkv.ln_out(x)
         logits = self.rwkv.head(x) # [B, T, V]
-        return logits, targets
+        return logits
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
@@ -618,13 +621,14 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels)
+        x, _, packed_image_features = self.preparing_embedding(sampels)
+        image_states = self.state_encoder(packed_image_features)
         # generate
         generated_tokens = []
         generated_token_logits = []
         generated_token_probs = []
         for i in range(max_new_tokens):
-            logits = self.rwkv(x)[:, -1, :]
+            logits = self.forward_with_image_states(x, image_states)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy

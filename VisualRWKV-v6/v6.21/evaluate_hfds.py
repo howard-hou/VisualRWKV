@@ -69,7 +69,7 @@ def eval_model(args):
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path), strict=False)
+    msg = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
@@ -94,6 +94,7 @@ def eval_model(args):
         image_dict = get_input_image_dict(image_list, image_processor)
         for k in image_dict:
             image_dict[k] = image_dict[k].bfloat16().to(args.device)
+        image_dict['num_image_per_sample'] = [len(image_dict[k])] # make sure one sample per step
 
         conversations = prepare_conversations(line)
 
