@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
     parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
 
@@ -177,11 +178,16 @@ if __name__ == "__main__":
     from src.rwkv_tokenizer import TRIE_TOKENIZER
     from src.model import VisualRWKV
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
+    from src.utils import (load_rwkv_from_pretrained, load_image_state_encoder_from_checkpoint, 
+                           enable_state_encoder_pretrain_mode, compress_parameter_names)
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()
+    if args.load_model: # load rwkv language model
+        model = load_rwkv_from_pretrained(model, args.load_model)
     if args.model_path:
+        rank_zero_info(f"loading visual rwkv model from {args.model_path}")
         raw_model = torch.load(args.model_path, map_location='cpu', weights_only=True)
         # use pos_embed from pretrained model
         if "vit.dino_featurizer.pos_embed" in raw_model:
@@ -189,13 +195,19 @@ if __name__ == "__main__":
         if "vit.siglip_featurizer.pos_embed" in raw_model:
             del raw_model["vit.siglip_featurizer.pos_embed"]
         msg = model.load_state_dict(raw_model, strict=False)
-        rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
+        msg = {
+            'missing_keys': compress_parameter_names(msg.missing_keys), 
+            'unexpected_keys': compress_parameter_names(msg.unexpected_keys)
+        }
+        rank_zero_info(f"msg from loading visual rwkv model: {msg}")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
     if args.enable_state_encoder_pretrain_mode > 0:
-        model.enable_state_encoder_pretrain_mode()
+        enable_state_encoder_pretrain_mode(model)
+    else:
+        model = load_image_state_encoder_from_checkpoint(model, args.model_path)
     model.freeze_emb() # freeze emb all the time
 
     # init training data

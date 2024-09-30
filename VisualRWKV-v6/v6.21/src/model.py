@@ -19,6 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
+from .utils import compress_parameter_names
 from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
 
 def __nop(ob):
@@ -234,10 +235,10 @@ class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
         self.read = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.read_gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        # init read gate to 0
+        self.read_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
+        # init read gate to 0, bias to -8
         self.read_gate.weight.data.zero_()
-        self.gate_logit_normalizer = 8
+        self.read_gate.bias.data.fill_(-8.0)
 
     def forward(self, x, s_img):
         B, T, C = x.size()
@@ -246,8 +247,8 @@ class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
         r, k, v, g, w = self.jit_func(x)
 
         q = self.read(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
-        # push gate close to 0 at the beginning, so logit is negative( 0 - gate_logit_normalizer)
-        q_gate = (self.read_gate(x) - self.gate_logit_normalizer).sigmoid().view(B,T,H,-1).transpose(1,2)
+        # push gate close to 0 at the beginning, so init weight to 0, bias to -8
+        q_gate = self.read_gate(x).sigmoid().view(B,T,H,-1).transpose(1,2)
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
@@ -322,7 +323,7 @@ class Block(nn.Module):
         return x, s
     
 
-class BlockState(nn.Module):
+class StateEncoderBlock(nn.Module):
     def __init__(self, args, layer_id):
         super().__init__()
         self.args = args
@@ -405,12 +406,12 @@ class ImageStateEncoder(MyModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.blocks = nn.ModuleList([BlockState(args, i) for i in range(1)])
-        self.ln_in = nn.LayerNorm(args.n_embd)
+        self.blocks = nn.ModuleList([
+            StateEncoderBlock(args, i) for i in range(args.n_state_encoder_layer)
+            ])
 
     def forward(self, x):
-        x = self.ln_in(x)
-
+        # output the last state
         for block in self.blocks:
             x, s = block(x, s=None)
 
@@ -422,20 +423,20 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
-        if len(args.load_model) > 0:
-            self.load_rwkv_from_pretrained(args.load_model)
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
-        if args.proj_type == "linear":
-            self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
-        else:
-            self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+        self.proj = self.init_proj(args)
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
         self.state_encoder = ImageStateEncoder(args)
-
-    def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
-        rank_zero_info(f"Loaded pretrained RWKV from {path}")
+        
+    def init_proj(self, args):
+        if args.proj_type == "linear":
+            proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
+        elif args.proj_type == "mlp":
+            proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+        else:
+            raise ValueError(f"Unknown projection type: {args.proj_type}")
+        return proj
 
     @property
     def deepspeed_offload(self) -> bool:
@@ -467,22 +468,14 @@ class VisualRWKV(pl.LightningModule):
     def freeze_proj(self):
         self.proj.requires_grad_(False)
 
-    def enable_state_encoder_pretrain_mode(self):
-        # 1. freeze the RWKV model
-        self.requires_grad_(False)
-        # 2. unfreeze the state encoder
-        self.state_encoder.requires_grad_(True)
-        # 3. unfreeze the readout layer in blocks
-        for block in self.rwkv.blocks:
-            block.att.read.requires_grad_(True)
-
     def configure_optimizers(self):
         zero_weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) < 2 and p.requires_grad]
         # add weight decay to len(p.squeeze().shape) >= 2
         weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) >= 2 and p.requires_grad] 
 
         name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
-        rank_zero_info(f"Name of trainable parameters in optimizers: {name_of_trainable_params}")
+        compressed_name_of_trainable_params = compress_parameter_names(name_of_trainable_params)
+        rank_zero_info(f"Name of trainable parameters in optimizers: {compressed_name_of_trainable_params}")
         rank_zero_info(f"Number of trainable parameters in optimizers: {len(name_of_trainable_params)}")
         optim_groups = []
         if zero_weight_decay_group:
