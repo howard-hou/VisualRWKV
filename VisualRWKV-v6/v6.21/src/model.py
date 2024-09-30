@@ -426,7 +426,6 @@ class VisualRWKV(pl.LightningModule):
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
         self.proj = self.init_proj(args)
-        self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
         self.state_encoder = ImageStateEncoder(args)
         
     def init_proj(self, args):
@@ -531,11 +530,11 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
 
-    def adaptive_pooling(self, image_features):
+    def adaptive_pooling(self, image_features, output_size):
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D).permute(0, 3, 1, 2)
-        image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
+        image_features = F.adaptive_avg_pool2d(image_features, output_size).view(B, D, -1).permute(0, 2, 1)
         return image_features
     
     def encode_images(self, images: dict, minibatch_size=4) -> torch.Tensor:
@@ -559,7 +558,8 @@ class VisualRWKV(pl.LightningModule):
                 torch.cuda.empty_cache()
                 image_features.append(minibatch_features)
             image_features_orig = torch.cat(image_features, dim=0)
-        image_features_pooled = self.adaptive_pooling(image_features_orig)
+        image_features_pooled = self.adaptive_pooling(image_features_orig, 
+                                                      output_size=int(self.args.num_token_per_image ** 0.5))
         return self.proj(image_features_pooled), self.proj(image_features_orig)
    
     def preparing_embedding(self, samples):
@@ -587,17 +587,22 @@ class VisualRWKV(pl.LightningModule):
         packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'])
         return input_embeds.view(B, L, D), samples["labels"], packed_image_features
 
-    def pack_image_features(self, image_features, num_image_per_sample):
+    def pack_image_features(self, image_features, num_image_per_sample, max_feature_len=4096):
         ''' pack image features to the same length '''
         max_num_image = max(num_image_per_sample)
-        max_len = max_num_image * image_features.shape[1]
+        max_len = min(max_num_image * image_features.shape[1], max_feature_len)
         # init with zeros
         packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
                                         device=image_features.device, dtype=image_features.dtype)
         # split
         image_features = image_features.split(num_image_per_sample, dim=0)
         for i, feat_tup in enumerate(image_features):
-            image_feature = torch.cat(list(feat_tup), dim=0)
+            image_feature = torch.cat(list(feat_tup), dim=0) # [num_image*T, D]
+            if image_feature.size(0) > max_len: # adaptive pooling to H/2, W/2
+                image_feature = image_feature.view(len(feat_tup), -1, image_feature.size(-1))
+                output_size = int(image_feature.shape[1] ** 0.5) // 2
+                image_feature = self.adaptive_pooling(image_feature, output_size=output_size)
+                image_feature = image_feature.view(-1, image_feature.size(-1))
             packed_image_features[i, -image_feature.size(0):] = image_feature # left padding
         return packed_image_features
 
