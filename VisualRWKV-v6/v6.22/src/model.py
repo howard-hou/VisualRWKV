@@ -249,6 +249,7 @@ class RWKV_Tmix_x060_CROSS(MyModule):
                 ddd[0, 0, i] = i / args.n_embd
 
             # fancy time_mix
+            self.time_maa_x = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
             self.time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
             self.time_maa_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
@@ -297,9 +298,10 @@ class RWKV_Tmix_x060_CROSS(MyModule):
 
     def forward(self, x, s_img):
         B, T, C = x.size()
+        H = self.n_head
         
         r, g = self.jit_func(x)
-
+        r = r.view(B,T,H,-1).transpose(1,2)
         # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
         x = (r @ s_img).transpose(1,2).reshape(B, T, C)
 
