@@ -39,30 +39,15 @@ def multi_image_collate_fn(batch):
 
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
-    num_image_paths: int
 ) -> Sequence[Dict]:
     """
     Process image tokens within conversations.
-    image first, then text
+    remove image tokens
     replace \n\n with \n
-    make sure the number of image tokens is euqal to the number of image paths
     """
-    num_global_images = sum([sentence['value'].count(DEFAULT_IMAGE_TOKEN) for sentence in conversations])
-    assert num_global_images == num_image_paths, f"num_global_images: {num_global_images}, num_image_paths: {num_image_paths}, not match."
     for sentence in conversations:
-        if DEFAULT_IMAGE_TOKEN in sentence['value']:
-            # must count first, then replace
-            num_local_images = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
-            # 
-            sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
-            sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            if sentence['from'].lower() == "human":
-                # always put image token at the beginning
-                image_prifix = "\n".join(num_local_images * [DEFAULT_IMAGE_TOKEN])
-                sentence['value'] = image_prifix + '\n' + sentence['value']
-            sentence['value'] = sentence['value'].strip()
-        else:
-            sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
+        sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
+        sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
 
     return conversations
 
@@ -96,17 +81,6 @@ def _add_speaker_and_signal(conversations):
         else: # for inference, not add end signal and no whitespace after colon
             sentence["value"] = from_str + ":"
     return conversations
-
-
-def tokenize_with_image_token(prompt, tokenizer, num_token_per_image, image_token_index=IMAGE_TOKEN_INDEX):
-    prompt_chunks = [tokenizer.encode(chunk) for chunk in prompt.split(DEFAULT_IMAGE_TOKEN)]
-
-    input_ids = prompt_chunks[0]
-    for chunk in prompt_chunks[1:]:
-        input_ids.extend([image_token_index]*num_token_per_image)
-        input_ids.extend(chunk)
-
-    return input_ids
 
 
 def mask_targets(targets, tokenized_lens, speakers):
@@ -147,13 +121,10 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image
     """
     # add end signal and concatenate together
     conversations = _add_speaker_and_signal(conversations)
-    input_text = "".join([sentence["value"] for sentence in conversations])
+    input_text = "\n".join([sentence["value"] for sentence in conversations])
     input_ids, tokenized_lens, speakers = [], [], []
     for conversation in conversations:
-        if has_image:
-            conv_ids = tokenize_with_image_token(conversation["value"], tokenizer, num_token_per_image)
-        else:
-            conv_ids = tokenizer.encode(conversation["value"])
+        conv_ids = tokenizer.encode(conversation["value"])
         input_ids.extend(conv_ids)
         tokenized_lens.append(len(conv_ids))
         speakers.append(conversation["from"])
@@ -217,8 +188,7 @@ class MyDataset(Dataset):
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
             # 
-            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
-                                                                  num_image_paths=num_image_paths)
+            conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
@@ -240,6 +210,12 @@ class MyDataset(Dataset):
                     "siglip":torch.zeros(num_image_paths, 3, 448, 448), 
                     "sam":torch.zeros(num_image_paths, 3, 1024, 1024)
                     }
+        else: # text only sample, for the sake of consistency
+            data_dict['images'] = {
+                "dino":torch.zeros(1, 3, 448, 448), 
+                "siglip":torch.zeros(1, 3, 448, 448), 
+                "sam":torch.zeros(1, 3, 1024, 1024)
+                }
 
         # add sample_id
         data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']

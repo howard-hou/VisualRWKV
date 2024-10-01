@@ -125,7 +125,7 @@ def eval_model(args):
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
+    msg = model.load_state_dict(torch.load(model_path), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")

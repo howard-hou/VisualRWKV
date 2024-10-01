@@ -19,7 +19,6 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import compress_parameter_names
 from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
 
 def __nop(ob):
@@ -36,7 +35,7 @@ if os.environ["RWKV_JIT_ON"] == "1":
 # FLA Kernel
 ########################################################################################################
 # @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6_STATE(B: int, T: int, C: int, H: int, r, k, v, w, u, s):
+def RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u, s):
     r = r.view(B,T,H,-1).transpose(1,2)
     k = k.view(B,T,H,-1).transpose(1,2)
     v = v.view(B,T,H,-1).transpose(1,2)
@@ -103,7 +102,7 @@ def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
 
 ########################################################################################################
 
-class RWKV_Tmix_x060_BASE(MyModule):
+class RWKV_Tmix_x060(MyModule):
     def __init__(self, args, layer_id):
         super().__init__()
         self.args = args
@@ -190,29 +189,6 @@ class RWKV_Tmix_x060_BASE(MyModule):
         return r, k, v, g, w
 
     @MyFunction
-    def jit_func_2(self, x, g):
-        B, T, C = x.size()
-        x = x.view(B * T, C)
-        
-        x = self.ln_x(x).view(B, T, C)
-        x = self.output(x * g)
-        return x
-
-    def forward(self, x):
-        B, T, C = x.size()
-        H = self.n_head
-
-        r, k, v, g, w = self.jit_func(x)
-        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
-
-        return self.jit_func_2(x, g)
-    
-
-class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
-    def __init__(self, args, layer_id):
-        super().__init__(args, layer_id)
-
-    @MyFunction
     def jit_func_2(self, x, g, s):
         B, T, C = x.size()
         x = x.view(B * T, C)
@@ -230,80 +206,6 @@ class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
 
         return self.jit_func_2(x, g, s)
 
-
-class RWKV_Tmix_x060_CROSS(MyModule):
-    def __init__(self, args, layer_id):
-        super().__init__()
-        self.args = args
-        self.layer_id = layer_id
-
-        self.head_size = args.head_size_a
-        self.n_head = args.dim_att // self.head_size
-        assert args.dim_att % self.n_head == 0
-
-        with torch.no_grad():
-            ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
-
-            # fancy time_mix
-            self.time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_maa_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
-            D_MIX_LORA = 32 # generate TIME_MIX for r,g
-            if args.n_embd >= 4096:
-                D_MIX_LORA = 64
-            self.time_maa_w1 = nn.Parameter(torch.zeros(args.n_embd, D_MIX_LORA*2))
-            self.time_maa_w2 = nn.Parameter(torch.zeros(2, D_MIX_LORA, args.n_embd).uniform_(-0.01, 0.01))
-
-        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-        self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-        self.gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.ln_x = nn.GroupNorm(self.n_head, args.dim_att, eps=(1e-5)*(args.head_size_divisor**2))
-
-        # initializing the output linear matrix to zero
-        self.output.weight.data.zero_()
-
-    @MyFunction
-    def jit_func(self, x):
-        B, T, C = x.size()
-
-        xx = self.time_shift(x) - x
-
-        xxx = x + xx * self.time_maa_x
-        xxx = torch.tanh(xxx @ self.time_maa_w1).view(B*T, 2, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, self.time_maa_w2).view(2  , B, T, -1)
-        mr, mg = xxx.unbind(dim=0)
-
-        xr = x + xx * (self.time_maa_r + mr)
-        xg = x + xx * (self.time_maa_g + mg)
-
-        r = self.receptance(xr)
-        g = F.silu(self.gate(xg))
-
-        return r, g
-    
-    @MyFunction
-    def jit_func_2(self, x, g):
-        B, T, C = x.size()
-        x = x.view(B * T, C)
-        
-        x = self.ln_x(x).view(B, T, C)
-        x = self.output(x * g)
-        return x
-
-    def forward(self, x, s_img):
-        B, T, C = x.size()
-        
-        r, g = self.jit_func(x)
-
-        # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        x = (r @ s_img).transpose(1,2).reshape(B, T, C)
-
-        return self.jit_func_2(x, g)
 ########################################################################################################
 
 class RWKV_CMix_x060(MyModule):
@@ -349,43 +251,11 @@ class Block(nn.Module):
 
         self.ln1 = nn.LayerNorm(args.n_embd)
         self.ln2 = nn.LayerNorm(args.n_embd)
-        self.ln3 = nn.LayerNorm(args.n_embd)
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(args.n_embd)
 
-        self.att = RWKV_Tmix_x060_BASE(args, layer_id)
-        self.cross = RWKV_Tmix_x060_CROSS(args, layer_id)
-        self.ffn = RWKV_CMix_x060(args, layer_id)
-
-        if args.dropout > 0:
-            self.drop0 = nn.Dropout(p = args.dropout)
-            self.drop1 = nn.Dropout(p = args.dropout)
-        
-    def forward(self, x, s):
-        if self.layer_id == 0:
-            x = self.ln0(x)
-
-        x = x + self.att(self.ln1(x))
-        x = x + self.cross(self.ln3(x), s)
-        x = x + self.ffn(self.ln2(x))
-
-        return x, s
-    
-
-class StateEncoderBlock(nn.Module):
-    def __init__(self, args, layer_id):
-        super().__init__()
-        self.args = args
-        self.layer_id = layer_id
-
-        self.ln1 = nn.LayerNorm(args.n_embd)
-        self.ln2 = nn.LayerNorm(args.n_embd)
-
-        if self.layer_id == 0:
-            self.ln0 = nn.LayerNorm(args.n_embd)
-
-        self.att = RWKV_Tmix_x060_STATE(args, layer_id)
+        self.att = RWKV_Tmix_x060(args, layer_id)
         self.ffn = RWKV_CMix_x060(args, layer_id)
 
         if args.dropout > 0:
@@ -433,7 +303,6 @@ class RWKV(pl.LightningModule):
             self.drop0 = nn.Dropout(p = args.dropout)
 
 
-
 class MLPWithContextGating(nn.Module):
     def __init__(self, in_dim, n_embd):
         super().__init__()
@@ -447,25 +316,6 @@ class MLPWithContextGating(nn.Module):
         x = self.proj(x)
         gating = torch.sigmoid(self.gate(x))
         return self.o_proj(x * gating)
-    
-
-class ImageStateEncoder(MyModule):
-    '''
-    RWKV time-mix encoder for image features
-    '''
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.blocks = nn.ModuleList([
-            StateEncoderBlock(args, i) for i in range(args.n_state_encoder_layer)
-            ])
-
-    def forward(self, x):
-        # output the last state
-        for block in self.blocks:
-            x, s = block(x, s=None)
-
-        return s
 
 
 class VisualRWKV(pl.LightningModule):
@@ -473,19 +323,19 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
+        if len(args.load_model) > 0:
+            self.load_rwkv_from_pretrained(args.load_model)
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
-        self.proj = self.init_proj(args)
-        self.state_encoder = ImageStateEncoder(args)
-        
-    def init_proj(self, args):
         if args.proj_type == "linear":
-            proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
-        elif args.proj_type == "mlp":
-            proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+            self.proj = nn.Linear(self.vit.embed_dim, args.n_embd, bias=False)
         else:
-            raise ValueError(f"Unknown projection type: {args.proj_type}")
-        return proj
+            self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+        self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
+
+    def load_rwkv_from_pretrained(self, path):
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
+        rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
     def deepspeed_offload(self) -> bool:
@@ -523,8 +373,7 @@ class VisualRWKV(pl.LightningModule):
         weight_decay_group = [p for p in self.parameters() if len(p.squeeze().shape) >= 2 and p.requires_grad] 
 
         name_of_trainable_params = [n for n, p in self.named_parameters() if p.requires_grad]
-        compressed_name_of_trainable_params = compress_parameter_names(name_of_trainable_params)
-        rank_zero_info(f"Name of trainable parameters in optimizers: {compressed_name_of_trainable_params}")
+        rank_zero_info(f"Name of trainable parameters in optimizers: {name_of_trainable_params}")
         rank_zero_info(f"Number of trainable parameters in optimizers: {len(name_of_trainable_params)}")
         optim_groups = []
         if zero_weight_decay_group:
@@ -540,22 +389,23 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets, image_features = self.preparing_embedding(samples)
-        image_states = self.state_encoder(image_features)
-        logits = self.forward_with_image_states(x, image_states)
-        return logits, targets
-    
-    def forward_with_image_states(self, x, image_states):
+        x, targets, x_img = self.preparing_embedding(samples)
+        # 假设bsz = 1，每个sample的images数量不同
+        # 第二种设计，多个image state求平均
         for i, block in enumerate(self.rwkv.blocks):
             if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
+                x_img, s_img = deepspeed.checkpointing.checkpoint(block, x_img, None) # [N, T, D]
+                s_img = s_img.mean(0, keepdim=True) # [1, H, D//H, D//H]
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, s_img)
             else:
-                x, _ = block(x, image_states)
+                x_img, s_img = block(x_img, None)
+                s_img = s_img.mean(0, keepdim=True) # [1, H, D//H, D//H]
+                x, _ = block(x, s_img)
 
-        x = self.rwkv.ln_out(x)
-        logits = self.rwkv.head(x) # [B, T, V]
-        return logits
-    
+        x = self.rwkv.ln_out(x) # [1, T, D]
+        logits = self.rwkv.head(x) # [1, T, V]
+        return logits, targets
+
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
@@ -580,11 +430,11 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
 
-    def adaptive_pooling(self, image_features, output_size):
+    def adaptive_pooling(self, image_features):
         B, L, D = image_features.shape
         H_or_W = int(L**0.5)
         image_features = image_features.view(B, H_or_W, H_or_W, D).permute(0, 3, 1, 2)
-        image_features = F.adaptive_avg_pool2d(image_features, output_size).view(B, D, -1).permute(0, 2, 1)
+        image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
         return image_features
     
     def encode_images(self, images: dict, minibatch_size=4) -> torch.Tensor:
@@ -598,7 +448,7 @@ class VisualRWKV(pl.LightningModule):
         # mini-batch: split images every minibatch_size images equally
         N = len(images['siglip'])
         if N <= minibatch_size:
-            image_features_orig = self.vit(images).detach()
+            image_features = self.vit(images).detach()
             torch.cuda.empty_cache()
         else:
             image_features = []
@@ -607,55 +457,16 @@ class VisualRWKV(pl.LightningModule):
                 minibatch_features = self.vit(minibatch_images).detach()
                 torch.cuda.empty_cache()
                 image_features.append(minibatch_features)
-            image_features_orig = torch.cat(image_features, dim=0)
-        image_features_pooled = self.adaptive_pooling(image_features_orig, 
-                                                      output_size=int(self.args.num_token_per_image ** 0.5))
-        return self.proj(image_features_pooled), self.proj(image_features_orig)
+            image_features = torch.cat(image_features, dim=0)
+        image_features = self.adaptive_pooling(image_features)
+        return self.proj(image_features)
    
     def preparing_embedding(self, samples):
-        if "images" not in samples:
-            return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
-        image_features_pooled, image_features_orig = self.encode_images(samples["images"])
-        B_IMG, L_IMG, D_IMG = image_features_pooled.shape
-        selected_image_features = image_features_pooled.view(-1, D_IMG)
+        image_features  = self.encode_images(samples["images"])
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
-        B, L, D = input_embeds.shape
-        input_embeds = input_embeds.view(B * L, D)
-        input_ids = samples["input_ids"].view(B * L)
-        selected = (input_ids == IMAGE_TOKEN_INDEX)
-        selected_sum = selected.sum()
-        if selected_sum != B_IMG*L_IMG:
-            # truncate the image_features, wrong way to handle this, but it is fine for now
-            selected_image_features = selected_image_features[:selected_sum]
-            sample_id = ':::'.join(samples["sample_id"])
-            rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
-        # fill the image features to the input_embeds
-        input_embeds[selected] = selected_image_features
-        # pack image features
-        packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'])
-        return input_embeds.view(B, L, D), samples["labels"], packed_image_features
-
-    def pack_image_features(self, image_features, num_image_per_sample, max_feature_len=4096):
-        ''' pack image features to the same length '''
-        max_num_image = max(num_image_per_sample)
-        max_len = min(max_num_image * image_features.shape[1], max_feature_len)
-        # init with zeros
-        packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
-                                        device=image_features.device, dtype=image_features.dtype)
-        # split
-        image_features = image_features.split(num_image_per_sample, dim=0)
-        for i, feat_tup in enumerate(image_features):
-            image_feature = torch.cat(list(feat_tup), dim=0) # [num_image*T, D]
-            if image_feature.size(0) > max_len: # adaptive pooling to H/2, W/2
-                image_feature = image_feature.view(len(feat_tup), -1, image_feature.size(-1))
-                output_size = int(image_feature.shape[1] ** 0.5) // 2
-                image_feature = self.adaptive_pooling(image_feature, output_size=output_size)
-                image_feature = image_feature.view(-1, image_feature.size(-1))
-            packed_image_features[i, -image_feature.size(0):] = image_feature # left padding
-        return packed_image_features
-
+        return input_embeds, samples["labels"], image_features
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
@@ -669,14 +480,13 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _, packed_image_features = self.preparing_embedding(sampels)
-        image_states = self.state_encoder(packed_image_features)
+        x, _ = self.preparing_embedding(sampels)
         # generate
         generated_tokens = []
         generated_token_logits = []
         generated_token_probs = []
         for i in range(max_new_tokens):
-            logits = self.forward_with_image_states(x, image_states)[:, -1, :]
+            logits = self.rwkv(x)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
