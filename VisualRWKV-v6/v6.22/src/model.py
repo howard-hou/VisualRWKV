@@ -463,11 +463,12 @@ class ImageStateEncoder(MyModule):
             ])
 
     def forward(self, x):
-        # output the last state
+        s_list = []
         for block in self.blocks:
             x, s = block(x, s=None)
+            s_list.append(s)
 
-        return s
+        return s_list
 
 
 class VisualRWKV(pl.LightningModule):
@@ -548,11 +549,13 @@ class VisualRWKV(pl.LightningModule):
         return logits, targets
     
     def forward_with_image_states(self, x, image_states):
+        num_image_states = len(image_states)
         for i, block in enumerate(self.rwkv.blocks):
+            s_idx = i % num_image_states
             if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states[s_idx])
             else:
-                x, _ = block(x, image_states)
+                x, _ = block(x, image_states[s_idx])
 
         x = self.rwkv.ln_out(x)
         logits = self.rwkv.head(x) # [B, T, V]
