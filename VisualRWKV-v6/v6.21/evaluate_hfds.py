@@ -1,5 +1,5 @@
 import os
-os.environ["RWKV_JIT_ON"] = "1"
+os.environ["RWKV_JIT_ON"] = "0"
 
 import json
 from PIL import Image
@@ -173,6 +173,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--num_token_per_image", type=int, default=16)
+    parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--dataset_path", type=str, default=None)

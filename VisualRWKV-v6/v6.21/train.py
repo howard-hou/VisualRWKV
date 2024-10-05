@@ -63,7 +63,6 @@ if __name__ == "__main__":
     parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
     parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
-
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 

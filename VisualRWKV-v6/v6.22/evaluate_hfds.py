@@ -174,6 +174,7 @@ if __name__ == "__main__":
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--n_state_encoder_layer", default=6, type=int)
+    parser.add_argument("--fill_image_features", default=1, type=int)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--dataset_path", type=str, default=None)
