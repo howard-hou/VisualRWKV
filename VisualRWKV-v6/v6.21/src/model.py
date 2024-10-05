@@ -581,10 +581,8 @@ class VisualRWKV(pl.LightningModule):
             selected_image_features = selected_image_features[:selected_sum]
             sample_id = ':::'.join(samples["sample_id"])
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
-        if self.args.fill_image_features > 0:
-            # when fill_image_features not enabled, it is pure cross-state mode.
-            # fill the image features to the input_embeds
-            input_embeds[selected] = selected_image_features
+        # fill the image features to the input_embeds
+        input_embeds[selected] = selected_image_features
         # pack image features
         packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'])
         return input_embeds.view(B, L, D), samples["labels"], packed_image_features

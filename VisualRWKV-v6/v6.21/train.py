@@ -63,8 +63,6 @@ if __name__ == "__main__":
     parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
     parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
-    parser.add_argument("--fill_image_features", default=1, type=int, 
-                         help="fill the image features to the input_embeds. when it is not enabled, the model is in pure cross-state mode.")
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
