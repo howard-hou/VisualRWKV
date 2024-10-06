@@ -49,29 +49,6 @@ def load_visualrwkv_from_checkpoint(model, model_path):
     if "vit.siglip_featurizer.pos_embed" in ckpt_state_dict:
         del ckpt_state_dict["vit.siglip_featurizer.pos_embed"]
 
-    state_dict = model.state_dict()
-    # reuse att and ln2 blocks
-    cross_state_dict = {}
-    for k in ckpt_state_dict:
-        if "rwkv.blocks" in k and "att" in k:
-            cross_k = k.replace("att", "cross")
-            if cross_k in state_dict: 
-                if 'output' in k: # make sure the output layer is zeroed
-                    cross_state_dict[cross_k] = torch.zeros_like(ckpt_state_dict[k])
-                elif 'time_maa_w2' in k: 
-                    cross_state_dict[cross_k] = ckpt_state_dict[k][-2:]
-                elif 'time_maa_w1' in k:
-                    D_MIX_LORA = 32 if model.args.n_embd < 4096 else 64
-                    cross_state_dict[cross_k] = ckpt_state_dict[k][:, -D_MIX_LORA*2:]
-                else:
-                    cross_state_dict[cross_k] = ckpt_state_dict[k]
-        if "rwkv.blocks" in k and "ln2" in k:
-            cross_k = k.replace("ln2", "ln3")
-            if cross_k in state_dict:
-                cross_state_dict[cross_k] = ckpt_state_dict[k]
-
-    # update the state_dict
-    ckpt_state_dict.update(cross_state_dict)
     msg = model.load_state_dict(ckpt_state_dict, strict=False)
     msg = {
         'missing_keys': compress_parameter_names(msg.missing_keys), 
