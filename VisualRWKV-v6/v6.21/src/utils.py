@@ -64,8 +64,29 @@ def load_image_state_encoder_from_checkpoint(model, path):
     return model
 
 
+def load_visualrwkv_from_checkpoint(model, model_path):
+    '''
+    reuse some of the visual-rwkv blocks to initialize the cross block
+    '''
+    rank_zero_info(f"loading visual rwkv model from {model_path}")
+    ckpt_state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+    # use pos_embed from pretrained model
+    if "vit.dino_featurizer.pos_embed" in ckpt_state_dict:
+        del ckpt_state_dict["vit.dino_featurizer.pos_embed"]
+    if "vit.siglip_featurizer.pos_embed" in ckpt_state_dict:
+        del ckpt_state_dict["vit.siglip_featurizer.pos_embed"]
+
+    msg = model.load_state_dict(ckpt_state_dict, strict=False)
+    msg = {
+        'missing_keys': compress_parameter_names(msg.missing_keys), 
+        'unexpected_keys': compress_parameter_names(msg.unexpected_keys)
+    }
+    rank_zero_info(f"msg from loading visual rwkv model: {msg}")
+    return model
+
+
 def load_rwkv_from_pretrained(model, path):
-    model.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+    model.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
     rank_zero_info(f"Loaded pretrained RWKV from {path}")
     return model
 
