@@ -32,9 +32,12 @@ def enable_state_encoder_pretrain_mode(model):
     model.requires_grad_(False)
     # 2. unfreeze the state encoder
     model.state_encoder.requires_grad_(True)
-    # 3. unfreeze the readout layer in blocks
+    # 3. unfreeze the readout in blocks
     for block in model.rwkv.blocks:
         block.att.read.requires_grad_(True)
+        block.att.read_gate.requires_grad_(True)
+    # 4. unfreeze the projection layer
+    model.proj.requires_grad_(True)
 
 
 def load_image_state_encoder_from_checkpoint(model, path):
