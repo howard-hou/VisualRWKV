@@ -225,3 +225,59 @@ def compress_parameter_names(parameter_names):
         else:
             output.append(prefix)
     return output
+
+
+# --------------------------------------------------------
+# 3D sine-cosine position embedding
+# References:
+# https://github.com/facebookresearch/mae/blob/main/util/pos_embed.py
+# --------------------------------------------------------
+def get_3d_sincos_pos_embed(embed_dim, grid_size_x, grid_size_y, grid_size_z):
+    """
+    grid_size_x, grid_size_y, grid_size_z: ints of the grid dimensions in three axes
+    return:
+    pos_embed: [grid_size_x*grid_size_y*grid_size_z, embed_dim]
+    """
+    grid_x = np.arange(grid_size_x, dtype=np.float32)
+    grid_y = np.arange(grid_size_y, dtype=np.float32)
+    grid_z = np.arange(grid_size_z, dtype=np.float32)
+    grid_xx, grid_yy, grid_zz = np.meshgrid(grid_x, grid_y, grid_z)
+    grid = np.stack([grid_xx, grid_yy, grid_zz], axis=0)
+
+    grid = grid.reshape([3, 1, grid_size_x, grid_size_y, grid_size_z])
+    pos_embed = get_3d_sincos_pos_embed_from_grid(embed_dim, grid)
+    return pos_embed
+
+def get_3d_sincos_pos_embed_from_grid(embed_dim, grid):
+    # embed_dim should be divisible by 6
+    embed_dim_z = embed_dim // 6 * 2
+    embed_dim_y = embed_dim // 6 * 2
+    embed_dim_x = embed_dim - embed_dim_z - embed_dim_y
+
+    # use a third of dimensions to encode each axis
+    emb_x = get_1d_sincos_pos_embed_from_grid(embed_dim_x, grid[0])  # (X*Y*Z, D/3)
+    emb_y = get_1d_sincos_pos_embed_from_grid(embed_dim_y, grid[1])  # (X*Y*Z, D/3)
+    emb_z = get_1d_sincos_pos_embed_from_grid(embed_dim_z, grid[2])  # (X*Y*Z, D/3)
+
+    emb = np.concatenate([emb_x, emb_y, emb_z], axis=1)  # (X*Y*Z, D)
+    return emb
+
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+    """
+    embed_dim: output dimension for each position
+    pos: a list of positions to be encoded: size (M,)
+    out: (M, D)
+    """
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float32)
+    omega /= embed_dim / 2.
+    omega = 1. / 10000**omega  # (D/2,)
+
+    pos = pos.reshape(-1)  # (M,)
+    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+
+    emb_sin = np.sin(out)  # (M, D/2)
+    emb_cos = np.cos(out)  # (M, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    return emb

@@ -19,7 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import compress_parameter_names
+from .utils import compress_parameter_names, get_3d_sincos_pos_embed
 from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
 
 def __nop(ob):
@@ -561,12 +561,23 @@ class VisualRWKV(pl.LightningModule):
         image_features_pooled = self.adaptive_pooling(image_features_orig, 
                                                       output_size=int(self.args.num_token_per_image ** 0.5))
         return self.proj(image_features_pooled), self.proj(image_features_orig)
+    
+    def add_3d_sincos_pos_embed(self, image_features):
+        B, L, D = image_features.shape
+        H = int(L**0.5)
+        device, dtype = image_features.device, image_features.dtype
+        pos_embed = get_3d_sincos_pos_embed(D, B, H, H) # [B*H*H, D]
+        pos_embed = torch.from_numpy(pos_embed).to(device=device, dtype=dtype)
+        image_features = image_features.view(B*L, D) + pos_embed
+        return image_features.view(B, L, D)
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
         image_features_pooled, image_features_orig = self.encode_images(samples["images"])
+        image_features_pooled = self.add_3d_sincos_pos_embed(image_features_pooled)
+        image_features_orig = self.add_3d_sincos_pos_embed(image_features_orig)
         B_IMG, L_IMG, D_IMG = image_features_pooled.shape
         selected_image_features = image_features_pooled.view(-1, D_IMG)
         ### prepare input token
