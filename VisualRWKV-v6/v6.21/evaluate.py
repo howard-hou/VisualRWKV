@@ -1,5 +1,5 @@
 import os
-os.environ["RWKV_JIT_ON"] = "1"
+os.environ["RWKV_JIT_ON"] = "0"
 
 import json
 from PIL import Image
@@ -146,8 +146,8 @@ def eval_model(args):
         image_dict = get_input_image_dict(line, image_folder, image_processor)
         for k in image_dict:
             image_dict[k] = image_dict[k].bfloat16().to(args.device)
-            num_images = image_dict[k].shape[0]
-            #print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+        num_images = image_dict[k].shape[0]
+        image_dict['num_image_per_sample'] = [len(image_dict[k])] # make sure one sample per step
         
         input_text = get_input_text(line, num_images=num_images)
 
@@ -175,7 +175,10 @@ def eval_model(args):
             print("input_ids: ", input_ids)
             print("cur_prompt: ", cur_prompt)
             for k in image_dict:
-                print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+                if isinstance(image_dict[k], torch.Tensor):
+                    print(f"image_dict[{k}].shape: {image_dict[k].shape}")
+                else:
+                    print(f"{k}: {image_dict[k]}")
 
         with torch.inference_mode():
             output_ids, output_logits, output_probs = model.generate(

@@ -151,8 +151,8 @@ def eval_your_results(
 
         for item in your_results_video_type:
 
-            if skip_missing and item["missing"]:
-                continue
+            #if skip_missing and item["missing"]:
+            #    continue
 
             # Get the video category, sub category and question category
             video_category = item["domain"]
@@ -273,6 +273,7 @@ if __name__ == "__main__":
     eval_your_results(
         args.results_file, 
         video_types=args.video_duration_type,
+        skip_missing=True,
         return_categories_accuracy=args.return_categories_accuracy,
         return_sub_categories_accuracy=args.return_sub_categories_accuracy,
         return_task_types_accuracy=args.return_task_types_accuracy,
