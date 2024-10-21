@@ -1,6 +1,7 @@
 ckpt_path=$1
 question_file=$2
-n_state_encoder_layer=$3
+num_token_per_image=$3
+n_state_encoder_layer=$4
 # get name of the question file
 question_file_name=$(basename $question_file)
 # replace extension with json
@@ -13,6 +14,7 @@ echo "ckpt_path: $ckpt_path"
 echo "question_file: $question_file"
 echo "question_file_name: $question_file_name"
 echo "output_file_name: $output_file_name"
+echo "num_token_per_image: $num_token_per_image"
 echo "n_state_encoder_layer: $n_state_encoder_layer"
 
 
@@ -23,7 +25,7 @@ python evaluate.py \
     --image_folder /root/autodl-tmp/huggingface_datasets/Video-MME/output/ \
     --question_file $question_file \
     --output_file $ckpt_dir/Video-MME/$question_file_name \
-    --num_token_per_image 64 \
+    --num_token_per_image $num_token_per_image \
     --n_state_encoder_layer $n_state_encoder_layer
 
 python eval/convert_videomme_for_eval.py --src $ckpt_dir/Video-MME/$question_file_name \
