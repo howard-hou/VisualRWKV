@@ -19,8 +19,8 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import compress_parameter_names, get_3d_sincos_pos_embed
-from fla.ops.rwkv6 import fused_recurrent_rwkv6, chunk_rwkv6
+from .utils import compress_parameter_names
+from fla.ops.rwkv6 import fused_recurrent_rwkv6
 
 def __nop(ob):
     return ob
@@ -562,22 +562,12 @@ class VisualRWKV(pl.LightningModule):
                                                       output_size=int(self.args.num_token_per_image ** 0.5))
         return self.proj(image_features_pooled), self.proj(image_features_orig)
     
-    def add_3d_sincos_pos_embed(self, image_features):
-        B, L, D = image_features.shape
-        H = int(L**0.5)
-        device, dtype = image_features.device, image_features.dtype
-        pos_embed = get_3d_sincos_pos_embed(D, B, H, H) # [B*H*H, D]
-        pos_embed = torch.from_numpy(pos_embed).to(device=device, dtype=dtype)
-        image_features = image_features.view(B*L, D) + pos_embed
-        return image_features.view(B, L, D)
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
         image_features_pooled, image_features_orig = self.encode_images(samples["images"])
-        image_features_pooled = self.add_3d_sincos_pos_embed(image_features_pooled)
-        image_features_orig = self.add_3d_sincos_pos_embed(image_features_orig)
         B_IMG, L_IMG, D_IMG = image_features_pooled.shape
         selected_image_features = image_features_pooled.view(-1, D_IMG)
         ### prepare input token
@@ -595,13 +585,34 @@ class VisualRWKV(pl.LightningModule):
         # fill the image features to the input_embeds
         input_embeds[selected] = selected_image_features
         # pack image features
-        packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'])
+        packed_image_features = self.pack_image_features(image_features_orig, samples["images"]['num_image_per_sample'],
+                                    max_feature_len=self.args.state_encoder_max_feature_len if self.args.state_encoder_max_feature_len !=0 else None,
+                                    num_token_per_image=self.args.state_encoder_num_token_per_image if self.args.state_encoder_num_token_per_image !=0 else None) 
         return input_embeds.view(B, L, D), samples["labels"], packed_image_features
 
-    def pack_image_features(self, image_features, num_image_per_sample, max_feature_len=4096):
-        ''' pack image features to the same length '''
+    def pack_image_features(self, image_features: torch.Tensor, num_image_per_sample: list, max_feature_len=None, num_token_per_image=None):
+        ''' two modes:
+            1. pack image features to the same length: set max_feature_len to a fixed value
+            2. fix image tokens per image  
+        '''
+        assert max_feature_len is not None or num_token_per_image is not None, "max_feature_len or num_token_per_image should be provided"
+        assert max_feature_len is not None and num_token_per_image is None, "max_feature_len and num_token_per_image are exclusive"
         max_num_image = max(num_image_per_sample)
-        max_len = min(max_num_image * image_features.shape[1], max_feature_len)
+        if max_feature_len is not None:
+            if max_num_image * image_features.shape[1] > max_feature_len:
+                available_token_per_image = max_feature_len // max_num_image
+                # find the closest number of tokens per image less than [4, 16, 64, 256, 1024]
+                for token in [1024, 256, 64, 16, 4]:
+                    if token <= available_token_per_image:
+                        num_token_per_image = token
+                        break
+            else:
+                num_token_per_image = image_features.shape[1]
+            max_len = max_num_image * num_token_per_image
+        else:
+            max_len = max_num_image * num_token_per_image
+
+        output_size = int(num_token_per_image ** 0.5)
         # init with zeros
         packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
                                         device=image_features.device, dtype=image_features.dtype)
@@ -611,7 +622,6 @@ class VisualRWKV(pl.LightningModule):
             image_feature = torch.cat(list(feat_tup), dim=0) # [num_image*T, D]
             if image_feature.size(0) > max_len: # adaptive pooling to H/2, W/2
                 image_feature = image_feature.view(len(feat_tup), -1, image_feature.size(-1))
-                output_size = int(image_feature.shape[1] ** 0.5) // 2
                 image_feature = self.adaptive_pooling(image_feature, output_size=output_size)
                 image_feature = image_feature.view(-1, image_feature.size(-1))
             packed_image_features[i, -image_feature.size(0):] = image_feature # left padding
