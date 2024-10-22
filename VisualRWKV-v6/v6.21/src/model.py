@@ -595,14 +595,18 @@ class VisualRWKV(pl.LightningModule):
             1. pack image features to the same length: set max_feature_len to a fixed value
             2. fix image tokens per image  
         '''
+        # make sure max_feature_len or num_token_per_image is provided
         assert max_feature_len is not None or num_token_per_image is not None, "max_feature_len or num_token_per_image should be provided"
-        assert max_feature_len is not None and num_token_per_image is None, "max_feature_len and num_token_per_image are exclusive"
+        # make sure only one of them is provided
+        assert max_feature_len is None or num_token_per_image is None, "max_feature_len and num_token_per_image are exclusive"
+        #
         max_num_image = max(num_image_per_sample)
         if max_feature_len is not None:
             if max_num_image * image_features.shape[1] > max_feature_len:
                 available_token_per_image = max_feature_len // max_num_image
-                # find the closest number of tokens per image less than [4, 16, 64, 256, 1024]
-                for token in [1024, 256, 64, 16, 4]:
+                # find the closest number of tokens per image less than x**2
+                choices = [int(x**2) for x in range(32, 0, -1)]
+                for token in choices:
                     if token <= available_token_per_image:
                         num_token_per_image = token
                         break

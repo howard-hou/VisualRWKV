@@ -2,6 +2,8 @@ ckpt_path=$1
 question_file=$2
 num_token_per_image=$3
 n_state_encoder_layer=$4
+state_encoder_max_feature_len=$5
+state_encoder_num_token_per_image=$6
 # get name of the question file
 question_file_name=$(basename $question_file)
 # replace extension with json
@@ -16,6 +18,8 @@ echo "question_file_name: $question_file_name"
 echo "output_file_name: $output_file_name"
 echo "num_token_per_image: $num_token_per_image"
 echo "n_state_encoder_layer: $n_state_encoder_layer"
+echo "state_encoder_max_feature_len: $state_encoder_max_feature_len"
+echo "state_encoder_num_token_per_image: $state_encoder_num_token_per_image"
 
 
 python evaluate.py \
@@ -26,7 +30,9 @@ python evaluate.py \
     --question_file $question_file \
     --output_file $ckpt_dir/Video-MME/$question_file_name \
     --num_token_per_image $num_token_per_image \
-    --n_state_encoder_layer $n_state_encoder_layer
+    --n_state_encoder_layer $n_state_encoder_layer \
+    --state_encoder_max_feature_len $state_encoder_max_feature_len \
+    --state_encoder_num_token_per_image $state_encoder_num_token_per_image
 
 python eval/convert_videomme_for_eval.py --src $ckpt_dir/Video-MME/$question_file_name \
         --dst $ckpt_dir/Video-MME/$output_file_name
