@@ -85,7 +85,7 @@ def load_image_state_encoder_from_checkpoint(model, path):
 
 
 def load_rwkv_from_pretrained(model, path):
-    model.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+    model.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
     rank_zero_info(f"Loaded pretrained RWKV from {path}")
     return model
 
