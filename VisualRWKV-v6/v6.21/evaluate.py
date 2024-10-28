@@ -162,7 +162,6 @@ def eval_model(args):
         data_dict = preprocess(
             conversations,
             tokenizer,
-            has_image=True,
             ctx_len=args.ctx_len,
             num_token_per_image=args.num_token_per_image,
             pad_token_id=0,
