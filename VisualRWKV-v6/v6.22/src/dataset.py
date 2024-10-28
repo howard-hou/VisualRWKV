@@ -71,13 +71,17 @@ def process_tokens_in_conversations(
 ) -> Sequence[Dict]:
     """
     Process tokens within conversations.
+    remove image token,
     replace \n\n with \n
+    add image token at the beginning of the first round
     """
+    for sentence in conversations:
+        # remove image token, otherwise it will cause error
+        sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
+        sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
+
     # add one <image> token for non-image data, so that the model can handle it
     conversations[0]['value'] = DEFAULT_IMAGE_TOKEN + '\n' + conversations[0]['value']
-    for sentence in conversations:
-        sentence['value'] = sentence['value'].strip()
-        sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
 
     return conversations
 
