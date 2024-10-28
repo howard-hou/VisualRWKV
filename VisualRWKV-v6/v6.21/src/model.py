@@ -342,7 +342,7 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(args.n_embd)
 
-        self.att = RWKV_Tmix_x060_CROSS(args, layer_id)
+        self.att = RWKV_Tmix_x060_HYBRID(args, layer_id)
         self.ffn = RWKV_CMix_x060(args, layer_id)
 
         if args.dropout > 0:
