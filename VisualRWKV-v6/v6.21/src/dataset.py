@@ -240,6 +240,12 @@ class MyDataset(Dataset):
                     "siglip":torch.zeros(num_image_paths, 3, 448, 448), 
                     "sam":torch.zeros(num_image_paths, 3, 1024, 1024)
                     }
+        else:
+            data_dict['images'] = {
+                "dino":torch.zeros(1, 3, 448, 448), 
+                "siglip":torch.zeros(1, 3, 448, 448), 
+                "sam":torch.zeros(1, 3, 1024, 1024)
+            }
 
         # add sample_id
         data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
