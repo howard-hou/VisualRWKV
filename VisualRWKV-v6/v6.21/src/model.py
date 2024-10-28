@@ -231,29 +231,65 @@ class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
         return self.jit_func_2(x, g, s)
 
 
-class RWKV_Tmix_x060_CROSS(RWKV_Tmix_x060_BASE):
+class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
-        self.read = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.read_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
+        self.mem_read = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
         # init read gate to 0, bias to -8
-        self.read_gate.weight.data.zero_()
-        self.read_gate.bias.data.fill_(-8.0)
+        self.mem_gate.weight.data.zero_()
+        self.mem_gate.bias.data.fill_(-8.0)
+
+        D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
+        if args.n_embd >= 4096:
+            D_MIX_LORA = 64
+        self.time_mem_w1 = nn.Parameter(torch.zeros(args.n_embd, D_MIX_LORA*2))
+        self.time_mem_w2 = nn.Parameter(torch.zeros(2, D_MIX_LORA, args.n_embd).uniform_(-0.01, 0.01))
+
+        # fancy time_mix for memory read and memory gate
+        with torch.no_grad():
+            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)
+            ddd = torch.ones(1, 1, args.n_embd)
+            for i in range(args.n_embd):
+                ddd[0, 0, i] = i / args.n_embd
+            self.time_mem_r = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_mem_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+
+
+    def mem_ddlerp(self, x):
+        # do data-dependent interpolation for memory read and memory gate
+        B, T, C = x.size()
+        xx = self.time_shift(x) - x
+        xxx = x + xx * self.time_maa_x
+        xxx = torch.tanh(xxx @ self.time_mem_w1).view(B*T, 2, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_mem_w2).view(2, B, T, -1)
+        er, eg = xxx.unbind(dim=0)
+
+        xr = x + xx * (self.time_mem_r + er)
+        xg = x + xx * (self.time_mem_g + eg)
+
+        mr = self.mem_read(xr)
+        mg = F.sigmoid(self.mem_gate(xg))
+
+        return mr, mg
+
 
     def forward(self, x, s_img):
         B, T, C = x.size()
         H = self.n_head
         
         r, k, v, g, w = self.jit_func(x)
+        mr, mg = self.mem_ddlerp(x)
 
-        q = self.read(x).view(B,T,H,-1).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
-        # push gate close to 0 at the beginning, so init weight to 0, bias to -8
-        q_gate = self.read_gate(x).sigmoid().view(B,T,H,-1).transpose(1,2)
+        mr = mr.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
+        mg = mg.view(B, T, H, C//H).transpose(1,2)
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        x = x.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
 
-        read_out = q @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        x = x.view(B, T, H, C//H).transpose(1,2) * (1 - q_gate) + read_out * q_gate
+        mem_read_out = mr @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
+        x = x * (1 - mg) + mem_read_out * mg # hybrid mixing
+
         x = x.transpose(1,2).reshape(B, T, C)
 
         return self.jit_func_2(x, g)
