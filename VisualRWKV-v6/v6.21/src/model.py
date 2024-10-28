@@ -648,19 +648,19 @@ class VisualRWKV(pl.LightningModule):
                         break
             else:
                 num_token_per_image = image_features.shape[1]
-            max_len = max_num_image * num_token_per_image
+            real_feature_len = max_num_image * num_token_per_image
         else:
-            max_len = max_num_image * num_token_per_image
+            real_feature_len = max_num_image * num_token_per_image
 
         output_size = int(num_token_per_image ** 0.5)
         # init with zeros
-        packed_image_features = torch.zeros(len(num_image_per_sample), max_len, image_features.shape[-1], 
+        packed_image_features = torch.zeros(len(num_image_per_sample), real_feature_len, image_features.shape[-1], 
                                         device=image_features.device, dtype=image_features.dtype)
         # split
         image_features = image_features.split(num_image_per_sample, dim=0)
         for i, feat_tup in enumerate(image_features):
             image_feature = torch.cat(list(feat_tup), dim=0) # [num_image*T, D]
-            if image_feature.size(0) > max_len: # adaptive pooling to H/2, W/2
+            if image_feature.size(0) > real_feature_len: # adaptive pooling to H/2, W/2
                 image_feature = image_feature.view(len(feat_tup), -1, image_feature.size(-1))
                 image_feature = self.adaptive_pooling(image_feature, output_size=output_size)
                 image_feature = image_feature.view(-1, image_feature.size(-1))
