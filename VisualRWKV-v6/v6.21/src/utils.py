@@ -34,8 +34,12 @@ def enable_state_encoder_pretrain_mode(model):
     model.state_encoder.requires_grad_(True)
     # 3. unfreeze the readout in blocks
     for block in model.rwkv.blocks:
-        block.att.read.requires_grad_(True)
-        block.att.read_gate.requires_grad_(True)
+        block.att.mem_read.requires_grad_(True)
+        block.att.mem_gate.requires_grad_(True)
+        block.att.time_mem_w1.requires_grad_(True)
+        block.att.time_mem_w2.requires_grad_(True)
+        block.att.time_mem_r.requires_grad_(True)
+        block.att.time_mem_g.requires_grad_(True)
     # 4. unfreeze the projection layer
     model.proj.requires_grad_(True)
 
