@@ -195,8 +195,6 @@ if __name__ == "__main__":
         model.freeze_proj()
     if args.enable_state_encoder_pretrain_mode > 0:
         enable_state_encoder_pretrain_mode(model)
-    else:
-        model = load_image_state_encoder_from_checkpoint(model, args.model_path)
     model.freeze_emb() # freeze emb all the time
 
     # init training data
