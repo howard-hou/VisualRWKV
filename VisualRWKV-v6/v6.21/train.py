@@ -179,7 +179,7 @@ if __name__ == "__main__":
     from src.rwkv_tokenizer import TRIE_TOKENIZER
     from src.model import VisualRWKV
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
-    from src.utils import (load_rwkv_from_pretrained, load_image_state_encoder_from_checkpoint, load_visualrwkv_from_checkpoint,
+    from src.utils import (load_rwkv_from_pretrained, load_visualrwkv_from_checkpoint,
                            enable_state_encoder_pretrain_mode)
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # 256gb cpu memory is not enough for 8 gpus
