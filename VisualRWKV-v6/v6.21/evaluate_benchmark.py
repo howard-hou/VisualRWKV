@@ -51,7 +51,7 @@ def eval_model(args):
     tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
     image_processor = model.vit.get_image_transform()
 
-    num_input_token_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 24576, 32768]
+    num_input_token_list = [1]
     for num_input_token in tqdm(num_input_token_list):
         # prepare fake image
         image_dict = get_fake_input_image_dict(image_processor, args.num_fake_images)
@@ -78,9 +78,11 @@ def eval_model(args):
                 print(f"{k}: {image_dict[k]}")
 
         # timeit for inference
-        latency_list = []
+        # use os.environ to store, change the model code accordingly
+        os.environ["vision_encoder_latency"] = ""
+        os.environ["state_encoder_latency"] = ""
+        os.environ["decoder_latency"] = ""
         for _ in range(5):
-            start = time.time()
             with torch.inference_mode():
                 output_ids, output_logits, output_probs = model.generate(
                     input_ids,
@@ -90,13 +92,20 @@ def eval_model(args):
                     top_p=None,
                     max_new_tokens=1,
                     stop_token_idx=STOP_TOKEN_INDEX)
-            latency = time.time() - start
-            latency_list.append(latency)
-        latency_avg = sum(latency_list[1:]) / len(latency_list[1:])
         gpu_info = nvmlDeviceGetMemoryInfo(gpu_h)
+        vision_encoder_latency = np.mean([float(l) for l in os.environ["vision_encoder_latency"].split() if l][1:]) * 1000 # s to ms
+        state_encoder_latency = np.mean([float(l) for l in os.environ["state_encoder_latency"].split() if l][1:]) * 1000 # s to ms
+        decoder_latency = np.mean([float(l) for l in os.environ["decoder_latency"].split() if l][1:]) * 1000 # s to ms
         # convert gpu used to GiB
         gpu_used = gpu_info.used / 1024**3
-        print(f"num_input_token={num_input_token}, latency_avg={latency_avg:.4f}s, gpu_used={gpu_used:.4f}GiB")
+        print(f"num_input_token={num_input_token}, gpu_used={gpu_used:.4f} GiB)")
+        print(f"vision_encoder_latency={vision_encoder_latency:.4f} ms, state_encoder_latency={state_encoder_latency:.4f} ms, decoder_latency={decoder_latency:.4f} ms")
+        print(f"os.environ['vision_encoder_latency']={os.environ['vision_encoder_latency']}")
+        print(f"os.environ['state_encoder_latency']={os.environ['state_encoder_latency']}")
+        print(f"os.environ['decoder_latency']={os.environ['decoder_latency']}")
+        from pytorch_lightning.utilities.model_summary import ModelSummary
+        model_summary = ModelSummary(model)
+        print(model_summary)
 
 
 
