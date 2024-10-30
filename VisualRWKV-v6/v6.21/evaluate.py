@@ -74,7 +74,7 @@ def get_input_text(line, num_images):
     return input_text
     
 
-def get_input_image_dict(line, image_folder, image_processor):
+def get_input_image_dict(line, image_folder, image_processor, single_image_to_multi_image=False):
     # assert "image" in line or "video" in line, and not ("image" in line and "video" in line)
     if "image" not in line and "video" not in line:
         raise ValueError("Cannot find image or video in line: {}".format(line))
@@ -84,8 +84,11 @@ def get_input_image_dict(line, image_folder, image_processor):
     image_dict = {}
     if "image" in line:
         image = Image.open(image_folder /  line["image"]).convert("RGB")
-        best_resolution = select_best_resolution(image.size, POSSIBLE_RESOLUTIONS)
-        image_list = single_image_to_multi_image_strategy(image, best_resolution)
+        if single_image_to_multi_image is True:
+            best_resolution = select_best_resolution(image.size, POSSIBLE_RESOLUTIONS)
+            image_list = single_image_to_multi_image_strategy(image, best_resolution)
+        else:
+            image_list = [image]
         pixel_values = defaultdict(list)
         for image in image_list:
             pixel_value = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
@@ -142,6 +145,8 @@ def eval_model(args):
     update_every = len(questions) // 100
     for i, line in enumerate(questions):
         idx = get_question_id(line)
+        if 'metadata' not in line:
+            line['metadata'] = {}
         #
         image_dict = get_input_image_dict(line, image_folder, image_processor)
         for k in image_dict:
@@ -232,7 +237,7 @@ if __name__ == "__main__":
     parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
-    parser.add_argument("--num_token_per_image", type=int, default=16)
+    parser.add_argument("--num_token_per_image", type=int, default=64)
     parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     parser.add_argument("--state_encoder_max_feature_len", default=0, type=int)
     parser.add_argument("--state_encoder_num_token_per_image", default=0, type=int)
