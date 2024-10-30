@@ -98,7 +98,7 @@ def eval_model(args):
         decoder_latency = np.mean([float(l) for l in os.environ["decoder_latency"].split() if l][1:]) * 1000 # s to ms
         # convert gpu used to GiB
         gpu_used = gpu_info.used / 1024**3
-        print(f"num_input_token={num_input_token}, gpu_used={gpu_used:.4f} GiB)")
+        print(f"num_input_token={num_input_token}, gpu_used={gpu_used:.4f} GiB")
         print(f"vision_encoder_latency={vision_encoder_latency:.4f} ms, state_encoder_latency={state_encoder_latency:.4f} ms, decoder_latency={decoder_latency:.4f} ms")
         print(f"os.environ['vision_encoder_latency']={os.environ['vision_encoder_latency']}")
         print(f"os.environ['state_encoder_latency']={os.environ['state_encoder_latency']}")
