@@ -527,9 +527,12 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        image_states = self.get_image_states_by_fold(image_features, self.args.n_layer)
+        image_states = self.get_image_states(image_features)
         logits = self.forward_with_image_states(x, image_states)
         return logits, targets
+
+    def get_image_states(self, image_features):
+        return self.state_encoder(image_features)
     
     def get_image_states_by_fold(self, packed_image_features, n_layer):
         folded_tensor = fold_tensor_by_layer(packed_image_features, n_layer)
