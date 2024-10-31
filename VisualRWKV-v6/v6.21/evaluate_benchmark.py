@@ -35,12 +35,6 @@ def get_fake_input_image_dict(image_processor, num_images):
 
     return image_dict
 
-def get_real_num_token_per_image(num_input_token):
-    # choose closest num_token_per_image to num_input_token
-    for num_token_per_image in [i**2 for i in range(32, 0, -1)]:
-        if num_token_per_image <= num_input_token:
-            return num_token_per_image
-
 
 def eval_model(args):
     import time
@@ -59,13 +53,8 @@ def eval_model(args):
             image_dict[k] = image_dict[k].bfloat16().to(args.device)
         image_dict['num_image_per_sample'] = [len(image_dict[k])] # make sure one sample per step
         # prepare fake text input_ids
-        real_num_token_per_image = get_real_num_token_per_image(num_input_token)
-        args.num_token_per_image = real_num_token_per_image
-        num_image_token = args.num_fake_images * real_num_token_per_image
-        num_text_token = num_input_token - num_image_token
-        input_ids = [IMAGE_TOKEN_INDEX] * num_image_token + [0] * num_text_token
-        print(f"num_input_token={num_input_token}, real_num_token_per_image={real_num_token_per_image}, num_image_token={num_image_token}, num_text_token={num_text_token}")
-        assert len(input_ids) == num_input_token, f"len(input_ids)={len(input_ids)}, num_input_token={num_input_token}"
+        args.num_token_per_image = 1
+        input_ids = [IMAGE_TOKEN_INDEX]
         data_dict = {"input_ids": torch.tensor(input_ids)}
         input_ids = data_dict['input_ids'].unsqueeze(0).to(args.device)
 
