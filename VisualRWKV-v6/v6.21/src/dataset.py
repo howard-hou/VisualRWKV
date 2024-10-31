@@ -225,7 +225,7 @@ class MyDataset(Dataset):
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   num_image_paths=num_image_paths)
         elif 'video' in sample:
-            video_path = Path(args.image_folder) / sample['video']
+            video_path = str(Path(args.image_folder) / sample['video'])
             if video_path.endswith('.tar'):
                 # load tar file
                 with tarfile.open(video_path, 'r') as tar:
