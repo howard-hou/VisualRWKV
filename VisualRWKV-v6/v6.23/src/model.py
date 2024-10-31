@@ -235,10 +235,11 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
         self.mem_read = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
-        # init read gate to 0, bias to -8
-        self.mem_gate.weight.data.zero_()
-        self.mem_gate.bias.data.fill_(-8.0)
+        # self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
+        # # init read gate to 0, bias to -8
+        # self.mem_gate.weight.data.zero_()
+        # self.mem_gate.bias.data.fill_(-8.0)
+        self.mem_proj = nn.Linear(args.n_embd, args.dim_att, bias=False)
 
         D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
         if args.n_embd >= 4096:
@@ -269,7 +270,8 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         xg = x + xx * (self.time_mem_g + eg)
 
         mr = self.mem_read(xr)
-        mg = F.sigmoid(self.mem_gate(xg))
+        #mg = F.sigmoid(self.mem_gate(xg))
+        mg = xg
 
         return mr, mg
 
@@ -285,12 +287,12 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         mg = mg.view(B, T, H, C//H).transpose(1,2)
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
-        x = x.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
 
         mem_read_out = mr @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        x = x * (1 - mg) + mem_read_out * mg # hybrid mixing
-
-        x = x.transpose(1,2).reshape(B, T, C)
+        # concat x and mem_read_out, then proj
+        mem_read_out = mem_read_out.transpose(1,2).reshape(B, T, C)
+        #x = torch.cat([x, mem_read_out], dim=-1).contiguous()
+        x = self.mem_proj(x + mem_read_out)
 
         return self.jit_func_2(x, g)
 ########################################################################################################
@@ -544,9 +546,9 @@ class VisualRWKV(pl.LightningModule):
     def forward_with_image_states(self, x, image_states):
         for i, block in enumerate(self.rwkv.blocks):
             if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states[i])
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
             else:
-                x, _ = block(x, image_states[i])
+                x, _ = block(x, image_states)
 
         x = self.rwkv.ln_out(x)
         logits = self.rwkv.head(x) # [B, T, V]

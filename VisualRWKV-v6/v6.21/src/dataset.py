@@ -2,7 +2,7 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-import json, os, re, copy
+import json, os, re, copy, io, tarfile
 import numpy as np
 from PIL import Image, ImageFile
 import torch
@@ -222,6 +222,31 @@ class MyDataset(Dataset):
             # 
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   num_image_paths=num_image_paths)
+        elif 'video' in sample:
+            video_path = Path(args.image_folder) / sample['video']
+            if video_path.endswith('.tar'):
+                # load tar file
+                tar = tarfile.open(video_path, 'r')
+                all_images = [member for member in tar.getmembers() if member.isfile()]
+                all_images.sort(key=lambda x: x.name)
+                # uniformly sample frames
+                step = len(all_images) // args.num_image_per_video
+                image_paths = [all_images[i] for i in range(0, len(all_images), step)]
+                num_image_paths = len(image_paths)
+                pixel_values = defaultdict(list)
+                for image_path in image_paths:
+                    # read image from io.BytesIO
+                    image = Image.open(io.BytesIO(tar.extract(image_path).read())).convert('RGB')
+                    pixel_value = args.image_processor(image)
+                    for key in pixel_value:
+                        pixel_values[key].append(pixel_value[key])
+                # merge by key
+                merged_pixel_values = {}
+                for key in pixel_values:
+                    merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
+                is_image_available = True
+            else:
+                raise ValueError(f"Unsupported video format: {video_path}")
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
