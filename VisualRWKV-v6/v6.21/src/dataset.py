@@ -50,16 +50,18 @@ def process_image_tokens_in_conversations(
     num_global_images = sum([sentence['value'].count(DEFAULT_IMAGE_TOKEN) for sentence in conversations])
     assert num_global_images == num_image_paths, f"num_global_images: {num_global_images}, num_image_paths: {num_image_paths}, not match."
     for sentence in conversations:
-        if DEFAULT_IMAGE_TOKEN in sentence['value']:
+        if DEFAULT_IMAGE_TOKEN in sentence['value'] and sentence['from'].lower() == "gpt":
+            raise ValueError(f"Image token {DEFAULT_IMAGE_TOKEN} should not appear in GPT's sentence.")
+        
+        if DEFAULT_IMAGE_TOKEN in sentence['value'] and sentence['from'].lower() == "human":
             # must count first, then replace
             num_local_images = sentence['value'].count(DEFAULT_IMAGE_TOKEN)
             # 
             sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
-            if sentence['from'].lower() == "human":
-                # always put image token at the beginning
-                image_prifix = "\n".join(num_local_images * [DEFAULT_IMAGE_TOKEN])
-                sentence['value'] = image_prifix + '\n' + sentence['value']
+            # always put image token at the beginning
+            image_prifix = "\n".join(num_local_images * [DEFAULT_IMAGE_TOKEN])
+            sentence['value'] = image_prifix + '\n' + sentence['value']
             sentence['value'] = sentence['value'].strip()
         else:
             sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
@@ -219,32 +221,40 @@ class MyDataset(Dataset):
             except:
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
                 is_image_available = False
-            # 
+            # process conversation
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   num_image_paths=num_image_paths)
         elif 'video' in sample:
             video_path = Path(args.image_folder) / sample['video']
             if video_path.endswith('.tar'):
                 # load tar file
-                tar = tarfile.open(video_path, 'r')
-                all_images = [member for member in tar.getmembers() if member.isfile()]
-                all_images.sort(key=lambda x: x.name)
-                # uniformly sample frames
-                step = len(all_images) // args.num_image_per_video
-                image_paths = [all_images[i] for i in range(0, len(all_images), step)]
-                num_image_paths = len(image_paths)
-                pixel_values = defaultdict(list)
-                for image_path in image_paths:
-                    # read image from io.BytesIO
-                    image = Image.open(io.BytesIO(tar.extract(image_path).read())).convert('RGB')
-                    pixel_value = args.image_processor(image)
-                    for key in pixel_value:
-                        pixel_values[key].append(pixel_value[key])
-                # merge by key
-                merged_pixel_values = {}
-                for key in pixel_values:
-                    merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
-                is_image_available = True
+                with tarfile.open(video_path, 'r') as tar:
+                    video_frames = [member for member in tar.getmembers() if member.isfile()]
+                    video_frames.sort(key=lambda x: x.name)
+                    num_frames = sum([sentence['value'].count(DEFAULT_IMAGE_TOKEN) for sentence in sample["conversations"]])
+                    # uniform sampling
+                    if len(video_frames) <= num_frames:
+                        sampled_frames = video_frames
+                    else:
+                        indices = np.linspace(0, len(video_frames) - 1, num_frames)
+                        rounded_indices = np.round(indices).astype(int)
+                        sampled_frames = [video_frames[i] for i in rounded_indices]
+                    num_real_frames = len(sampled_frames)
+                    pixel_values = defaultdict(list)
+                    for frame in sampled_frames:
+                        # read image from io.BytesIO
+                        image = Image.open(io.BytesIO(tar.extractfile(frame).read())).convert('RGB')
+                        pixel_value = args.image_processor(image)
+                        for key in pixel_value:
+                            pixel_values[key].append(pixel_value[key])
+                    # merge by key
+                    merged_pixel_values = {}
+                    for key in pixel_values:
+                        merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
+                    is_image_available = True
+                # process conversation
+                conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
+                                                                      num_image_paths=num_real_frames)
             else:
                 raise ValueError(f"Unsupported video format: {video_path}")
         else:

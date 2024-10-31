@@ -239,7 +239,7 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         # # init read gate to 0, bias to -8
         # self.mem_gate.weight.data.zero_()
         # self.mem_gate.bias.data.fill_(-8.0)
-        self.mem_proj = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.mem_proj = nn.Linear(args.n_embd, 1, bias=False)
 
         D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
         if args.n_embd >= 4096:
@@ -292,7 +292,12 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         # concat x and mem_read_out, then proj
         mem_read_out = mem_read_out.transpose(1,2).reshape(B, T, C)
         #x = torch.cat([x, mem_read_out], dim=-1).contiguous()
-        x = self.mem_proj(x + mem_read_out)
+        x_w = self.mem_proj(x)
+        m_w = self.mem_proj(mem_read_out)
+        # softmax for x_w and m_w
+        wm_w = torch.cat([x_w, m_w], dim=-1) # [B, T, 2]
+        wm_w = F.softmax(wm_w, dim=-1)
+        x = x * wm_w[..., 0:1] + mem_read_out * wm_w[..., 1:2]
 
         return self.jit_func_2(x, g)
 ########################################################################################################
