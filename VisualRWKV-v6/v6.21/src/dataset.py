@@ -37,6 +37,28 @@ def multi_image_collate_fn(batch):
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
+def process_image_tokens_in_conversations_for_single_video(
+    conversations: Sequence[Dict],
+    num_image_paths: int
+) -> Sequence[Dict]:
+    """
+    Process image tokens within conversations for single video.
+    adjust the number of image tokens to match the number of frames
+    replace \n\n with \n
+    make sure the number of image tokens is euqal to the number of image paths
+    """
+    image_token_prefix = "\n".join(num_image_paths * [DEFAULT_IMAGE_TOKEN])
+    for sentence in conversations:
+        # remove all image token
+        sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, "").strip()
+        # re
+        sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'].strip())
+
+    # add image token prefix at the beginning
+    conversations[0]['value'] = image_token_prefix + '\n' + conversations[0]['value']
+    return conversations
+
+
 def process_image_tokens_in_conversations(
     conversations: Sequence[Dict],
     num_image_paths: int
@@ -231,7 +253,9 @@ class MyDataset(Dataset):
                 with tarfile.open(video_path, 'r') as tar:
                     video_frames = [member for member in tar.getmembers() if member.isfile()]
                     video_frames.sort(key=lambda x: x.name)
-                    num_frames = sum([sentence['value'].count(DEFAULT_IMAGE_TOKEN) for sentence in sample["conversations"]])
+                    # here num_frames is determined by ctx // num_token_per_image
+                    # because the ctx_len is fixed, so we want to maximize the number of frames
+                    num_frames = (args.ctx_len - 256) // args.num_token_per_image
                     # uniform sampling
                     if len(video_frames) <= num_frames:
                         sampled_frames = video_frames
@@ -239,7 +263,8 @@ class MyDataset(Dataset):
                         indices = np.linspace(0, len(video_frames) - 1, num_frames)
                         rounded_indices = np.round(indices).astype(int)
                         sampled_frames = [video_frames[i] for i in rounded_indices]
-                    num_real_frames = len(sampled_frames)
+                    num_image_paths = len(sampled_frames)
+                    #print(f"video: {video_path}, video frames: {len(video_frames)}, num_frames: {num_frames}, num_real_frames: {num_image_paths}")
                     pixel_values = defaultdict(list)
                     for frame in sampled_frames:
                         # read image from io.BytesIO
@@ -253,8 +278,10 @@ class MyDataset(Dataset):
                         merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
                     is_image_available = True
                 # process conversation
-                conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
-                                                                      num_image_paths=num_real_frames)
+                conversations = process_image_tokens_in_conversations_for_single_video(
+                    copy.deepcopy(sample["conversations"]),
+                    num_image_paths=num_image_paths
+                    )
             else:
                 raise ValueError(f"Unsupported video format: {video_path}")
         else:
@@ -268,7 +295,7 @@ class MyDataset(Dataset):
             pad_token_id=0)
         
         # image exist in the data
-        if 'image' in sample:
+        if 'image' in sample or 'video' in sample:
             if is_image_available:
                 data_dict['images'] = merged_pixel_values
             else:
