@@ -311,6 +311,8 @@ def fold_tensor_by_layer(packed_image_features, n_layer):
         padded_tensor[:, -length:, :] = packed_image_features
         length += padding_length
 
-    folded_tensor = torch.reshape(padded_tensor, (batch_size * n_layer, length // n_layer, dimension))
+        folded_tensor = torch.reshape(padded_tensor, (batch_size * n_layer, length // n_layer, dimension))
+    else:
+        folded_tensor = torch.reshape(packed_image_features, (batch_size * n_layer, length // n_layer, dimension))
 
     return folded_tensor
