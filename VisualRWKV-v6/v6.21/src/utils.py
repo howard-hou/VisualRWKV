@@ -285,3 +285,32 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
+
+
+# --------------------------------------------------------
+def fold_tensor_by_layer(packed_image_features, n_layer):
+    """
+    按照指定层数对张量进行折叠操作
+
+    Args:
+        packed_image_features (torch.Tensor): 形状为 [B, L, D] 的张量
+        n_layer (int): 用于折叠的层数
+
+    Returns:
+        torch.Tensor: 折叠后的张量，形状为 [B * n_layer, L // n_layer, D]（当L能被n_layer整除时）
+        或 [B * n_layer, (L + n_layer - L % n_layer) // n_layer, D]（当L不能被n_layer整除时）
+    """
+    batch_size, length, dimension = packed_image_features.shape
+
+    # 检查是否需要补齐
+    if length % n_layer!= 0:
+        padding_length = n_layer - length % n_layer
+        padded_tensor = torch.zeros((batch_size, length + padding_length, dimension),
+                                    device=packed_image_features.device,
+                                    dtype=packed_image_features.dtype)
+        padded_tensor[:, -length:, :] = packed_image_features
+        length += padding_length
+
+    folded_tensor = torch.reshape(padded_tensor, (batch_size * n_layer, length // n_layer, dimension))
+
+    return folded_tensor

@@ -3,6 +3,7 @@
 ########################################################################################################
 
 import os, math, gc, importlib
+from typing import Union
 import torch
 # torch._C._jit_set_profiling_executor(True)
 # torch._C._jit_set_profiling_mode(True)
@@ -19,7 +20,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import compress_parameter_names
+from .utils import compress_parameter_names, fold_tensor_by_layer
 from fla.ops.rwkv6 import fused_recurrent_rwkv6
 
 def __nop(ob):
@@ -527,20 +528,31 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        image_states = self.state_encoder(image_features)
+        image_states = self.get_image_states_by_fold(image_features, self.args.n_layer)
         logits = self.forward_with_image_states(x, image_states)
         return logits, targets
     
-    def forward_with_image_states(self, x, image_states):
+    def forward_with_image_states(self, x, image_states: torch.Tensor):
         for i, block in enumerate(self.rwkv.blocks):
+            image_state = image_states[i] if len(image_states.size()) == 5 else image_states
             if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
+                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_state)
             else:
-                x, _ = block(x, image_states)
+                x, _ = block(x, image_state)
 
         x = self.rwkv.ln_out(x)
         logits = self.rwkv.head(x) # [B, T, V]
         return logits
+
+    def get_image_states(self, image_features):
+        return self.state_encoder(image_features)
+
+    def get_image_states_by_fold(self, packed_image_features, n_layer):
+        folded_tensor = fold_tensor_by_layer(packed_image_features, n_layer)
+        image_states = self.state_encoder(folded_tensor) # [B * n_layer, L // n_layer, D]
+        # reshape image_states to [n_layer, B, C, H, H]
+        _, C, H, H = image_states.size()
+        return image_states.view(-1, n_layer, C, H, H).permute(1, 0, 2, 3, 4)
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
@@ -678,7 +690,7 @@ class VisualRWKV(pl.LightningModule):
         # max_new_tokens: int
         '''
         # prepare samples
-        sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
+        sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX), "sample_id": ["0"]}
         # prepare embedding, x: [1, seq_len, n_embd]
         x, _, packed_image_features = self.preparing_embedding(sampels)
         image_states = self.state_encoder(packed_image_features)
