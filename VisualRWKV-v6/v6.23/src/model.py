@@ -239,7 +239,7 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         # # init read gate to 0, bias to -8
         # self.mem_gate.weight.data.zero_()
         # self.mem_gate.bias.data.fill_(-8.0)
-        self.mem_proj = nn.Linear(args.n_embd, 1, bias=False)
+        self.mem_proj = nn.Linear(args.n_embd, args.dim_att, bias=False)
 
         D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
         if args.n_embd >= 4096:
@@ -270,8 +270,7 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         xg = x + xx * (self.time_mem_g + eg)
 
         mr = self.mem_read(xr)
-        #mg = F.sigmoid(self.mem_gate(xg))
-        mg = xg
+        mg = self.mem_proj(xg)
 
         return mr, mg
 
@@ -287,17 +286,17 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         mg = mg.view(B, T, H, C//H).transpose(1,2)
 
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
+        x = x.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
 
         mem_read_out = mr @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        # concat x and mem_read_out, then proj
-        mem_read_out = mem_read_out.transpose(1,2).reshape(B, T, C)
-        #x = torch.cat([x, mem_read_out], dim=-1).contiguous()
-        x_w = self.mem_proj(x)
-        m_w = self.mem_proj(mem_read_out)
+
+        x_w = (mg * x).sum(-1, keepdim=True) # [B, H, T, C//H] * [B, H, T, C//H] -> [B, H, T, 1]
+        m_w = (mg * mem_read_out).sum(-1, keepdim=True) # [B, H, T, C//H] * [B, H, T, C//H] -> [B, H, T, 1]
         # softmax for x_w and m_w
-        wm_w = torch.cat([x_w, m_w], dim=-1) # [B, T, 2]
+        wm_w = torch.cat([x_w, m_w], dim=-1) # [B, H, T, 2]
         wm_w = F.softmax(wm_w, dim=-1)
-        x = x * wm_w[..., 0:1] + mem_read_out * wm_w[..., 1:2]
+        x = x * wm_w[..., 0:1] + mem_read_out * wm_w[..., 1:2] # [B, H, T, C//H]
+        x = x.transpose(1,2).reshape(B, T, C)
 
         return self.jit_func_2(x, g)
 ########################################################################################################

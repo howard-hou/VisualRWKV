@@ -35,7 +35,7 @@ def enable_state_encoder_pretrain_mode(model):
     # 3. unfreeze the readout in blocks
     for block in model.rwkv.blocks:
         block.att.mem_read.requires_grad_(True)
-        block.att.mem_gate.requires_grad_(True)
+        block.att.mem_proj.requires_grad_(True)
         block.att.time_mem_w1.requires_grad_(True)
         block.att.time_mem_w2.requires_grad_(True)
         block.att.time_mem_r.requires_grad_(True)
