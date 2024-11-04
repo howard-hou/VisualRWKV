@@ -63,6 +63,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_state_encoder_layer", default=6, type=int)
     parser.add_argument("--state_encoder_max_feature_len", default=0, type=int)
     parser.add_argument("--state_encoder_num_token_per_image", default=0, type=int)
+    parser.add_argument("--multi_state_strategy", choices=['fold', 'default'], default='default')
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
     parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
     parser = Trainer.add_argparse_args(parser)

@@ -236,10 +236,9 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
     def __init__(self, args, layer_id):
         super().__init__(args, layer_id)
         self.mem_read = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
-        # init read gate to 0, bias to -8
-        self.mem_gate.weight.data.zero_()
-        self.mem_gate.bias.data.fill_(-8.0)
+        self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        # init memory gate to nn.init.uniform_(a=-1e-4, b=1e-4)
+        nn.init.uniform_(self.mem_gate.weight.data, a=-1e-4, b=1e-4)
 
         D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
         if args.n_embd >= 4096:
@@ -270,7 +269,7 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         xg = x + xx * (self.time_mem_g + eg)
 
         mr = self.mem_read(xr)
-        mg = F.sigmoid(self.mem_gate(xg))
+        mg = F.relu(self.mem_gate(xg))
 
         return mr, mg
 
@@ -289,7 +288,7 @@ class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
         x = x.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
 
         mem_read_out = mr @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-        x = x * (1 - mg) + mem_read_out * mg # hybrid mixing
+        x = x * F.relu(1 - mg) + mem_read_out * mg # hybrid mixing
 
         x = x.transpose(1,2).reshape(B, T, C)
 
@@ -528,7 +527,10 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        image_states = self.get_image_states_by_fold(image_features, self.args.n_layer)
+        if self.args.multi_state_strategy == 'fold':
+            image_states = self.get_image_states_by_fold(image_features, self.args.n_layer)
+        else:
+            image_states = self.get_image_states(image_features)
         logits = self.forward_with_image_states(x, image_states)
         return logits, targets
     
