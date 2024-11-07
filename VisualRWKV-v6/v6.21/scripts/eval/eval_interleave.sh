@@ -38,7 +38,8 @@ python evaluate_hfds.py \
     --model_path $model_path \
     --dataset_path $dataset_path \
     --num_token_per_image $num_token_per_image \
-    --n_state_encoder_layer $n_state_encoder_layer
+    --n_state_encoder_layer $n_state_encoder_layer \
+    --state_encoder_max_feature_len 4096
 
 
 python eval/eval_interleave.py $output_file
