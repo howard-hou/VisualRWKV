@@ -277,7 +277,7 @@ class MLP(nn.Module):
     def __init__(self, args, layer_id):
         super().__init__()
         self.c_fc = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-        self.relu = nn.RELU()
+        self.relu = nn.ReLU()
         self.c_proj = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
         # zero output linear
         self.c_proj.weight.data.zero_()
