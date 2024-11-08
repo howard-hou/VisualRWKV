@@ -19,7 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import mix_blocks
+from .utils import get_cross_block_indices
 
 def __nop(ob):
     return ob
@@ -333,8 +333,8 @@ class CrossAttentionBlock(nn.Module):
         self.att = CrossAttentionLayer(args, layer_id)
         self.ffn = MLP(args, layer_id)
         
-    def forward(self, x):
-        x = x + self.att(self.ln1(x))
+    def forward(self, x, image_features):
+        x = x + self.att(self.ln1(x), image_features)
         x = x + self.ffn(self.ln2(x))
         return x
 
@@ -385,20 +385,7 @@ class HybridRWKV(pl.LightningModule):
         return False
 
     def forward(self, x):
-        args = self.args
-        if args.dropout > 0:
-            x = self.drop0(x)
-
-        mixed_blocks = mix_blocks(self.blocks, self.cross_blocks)
-        for block in enumerate(mixed_blocks):
-            if args.grad_cp == 1:
-                x = deepspeed.checkpointing.checkpoint(block, x)
-            else:
-                x = block(x)
-
-        x = self.ln_out(x)
-        x = self.head(x)
-        return x
+        raise NotImplementedError
 
     def training_step(self, batch, batch_idx):
         idx, targets = batch
@@ -418,18 +405,19 @@ class MLPWithContextGating(nn.Module):
         super().__init__()
         self.gate = nn.Linear(in_dim, in_dim, bias=False)
         self.o_proj = nn.Linear(in_dim, n_embd, bias=False)
+        self.ln_v = nn.LayerNorm(n_embd)
 
     def forward(self, x):
         # x: [B, T, D]
         gating = torch.sigmoid(self.gate(x))
-        return self.o_proj(x * gating)
+        return self.ln_v(self.o_proj(x * gating))
 
 
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.rwkv = RWKV(args)
+        self.rwkv = HybridRWKV(args)
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
         self.proj = self.init_proj(args)
@@ -498,30 +486,30 @@ class VisualRWKV(pl.LightningModule):
 
     def forward(self, samples):
         x, targets, image_features = self.preparing_embedding(samples)
-        image_states = self.get_image_states(image_features)
-        logits = self.forward_with_image_states(x, image_states)
+        logits = self.forward_with_image_features(x, image_features)
         return logits, targets
-
-    def get_image_states(self, image_features):
-        return self.state_encoder(image_features)
     
-    def get_image_states_by_fold(self, packed_image_features, n_layer):
-        folded_tensor = fold_tensor_by_layer(packed_image_features, n_layer)
-        image_states = self.state_encoder(folded_tensor) # [B * n_layer, L // n_layer, D]
-        # reshape image_states to [n_layer, B, C, H, H]
-        _, C, H, H = image_states.size()
-        return image_states.view(-1, n_layer, C, H, H).permute(1, 0, 2, 3, 4)
-    
-    def forward_with_image_states(self, x, image_states):
-        for i, block in enumerate(self.rwkv.blocks):
-            if self.args.grad_cp == 1:
-                x, _ = deepspeed.checkpointing.checkpoint(block, x, image_states)
+    def forward_with_image_features(self, x, image_features):
+        cross_block_indices = get_cross_block_indices(len(self.blocks), len(self.cross_blocks))
+        total_blocks = len(self.blocks) + len(self.cross_blocks)
+        block_index, cross_block_index = 0, 0
+        for i in range(total_blocks):
+            if i in cross_block_indices:
+                if self.args.grad_cp == 1:
+                    x = deepspeed.checkpointing.checkpoint(self.cross_blocks[cross_block_index], x, image_features)
+                else:
+                    x = self.cross_blocks[cross_block_index](x, image_features)
+                cross_block_index += 1
             else:
-                x, _ = block(x, image_states)
+                if self.args.grad_cp == 1:
+                    x = deepspeed.checkpointing.checkpoint(self.blocks[block_index], x)
+                else:
+                    x = self.blocks[block_index](x)
+                block_index += 1
 
-        x = self.rwkv.ln_out(x)
-        logits = self.rwkv.head(x) # [B, T, V]
-        return logits
+        x = self.ln_out(x)
+        x = self.head(x)
+        return x
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
