@@ -259,8 +259,8 @@ def get_cross_block_indices(n_layer, n_cross_layer):
     """
     block_index_list = list(range(n_layer+n_cross_layer))
 
-    # every mix_interval insert a cross block
-    interval = n_layer // n_cross_layer
+    # interval: every n block + a cross block
+    interval = n_layer // n_cross_layer + 1
 
     # cross block at the end
     cross_block_indices = []
