@@ -258,3 +258,38 @@ def fold_tensor_by_layer(packed_image_features, n_layer):
     folded_tensor = torch.reshape(padded_tensor, (batch_size * n_layer, length // n_layer, dimension))
 
     return folded_tensor
+
+# --------------------------------------------------------
+def mix_blocks(blocks, cross_blocks):
+    """
+    按照指定规则混合block和CrossAttentionBlock
+
+    :param blocks: 普通block组成的ModuleList
+    :param cross_blocks: CrossAttentionBlock组成的ModuleList
+    :return: 混合后的list
+    """
+    n_layer = len(blocks)
+    n_cross_layer = len(cross_blocks)
+
+    block_index_list = list(range(n_layer+n_cross_layer))
+
+    # every mix_interval insert a cross block
+    interval = n_layer // n_cross_layer
+
+    # cross block at the end
+    cross_block_indices = []
+    for i in range(n_cross_layer):
+        cross_block_indices.append(block_index_list[-1] - interval * i)
+
+    mixed_blocks = []
+    block_index = 0
+    cross_block_index = 0
+    for i in block_index_list:
+        if i in cross_block_indices:
+            mixed_blocks.append(cross_blocks[cross_block_index])
+            cross_block_index += 1
+        else:
+            mixed_blocks.append(blocks[block_index])
+            block_index += 1
+
+    return mixed_blocks

@@ -19,8 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import compress_parameter_names, fold_tensor_by_layer
-from fla.ops.rwkv6 import fused_recurrent_rwkv6
+from .utils import mix_blocks
 
 def __nop(ob):
     return ob
@@ -32,18 +31,6 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-########################################################################################################
-# FLA Kernel
-########################################################################################################
-# @torch.compile introduce bug, cannot use for torch < 2.5
-def RUN_FLA_RWKV6_STATE(B: int, T: int, C: int, H: int, r, k, v, w, u, s):
-    r = r.view(B,T,H,-1).transpose(1,2)
-    k = k.view(B,T,H,-1).transpose(1,2)
-    v = v.view(B,T,H,-1).transpose(1,2)
-    # u can be 3d or 2d (B, H, -1) or just (H, -1) to save VRAM
-    w = -torch.exp(w.view(B,T,H,-1).transpose(1,2))
-    o, final_state = fused_recurrent_rwkv6(r, k, v, w, u=u, scale=1.0, initial_state=s, output_final_state=True)
-    return o.transpose(1,2).reshape(B,T,C), final_state
 ########################################################################################################
 # CUDA Kernel
 ########################################################################################################
@@ -103,7 +90,7 @@ def RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u):
 
 ########################################################################################################
 
-class RWKV_Tmix_x060_BASE(MyModule):
+class RWKV_Tmix_x060(MyModule):
     def __init__(self, args, layer_id):
         super().__init__()
         self.args = args
@@ -206,99 +193,7 @@ class RWKV_Tmix_x060_BASE(MyModule):
         x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
 
         return self.jit_func_2(x, g)
-    
 
-class RWKV_Tmix_x060_STATE(RWKV_Tmix_x060_BASE):
-    def __init__(self, args, layer_id):
-        super().__init__(args, layer_id)
-
-    @MyFunction
-    def jit_func_2(self, x, g, s):
-        B, T, C = x.size()
-        x = x.view(B * T, C)
-        
-        x = self.ln_x(x).view(B, T, C)
-        x = self.output(x * g)
-        return x, s
-
-    def forward(self, x, s):
-        B, T, C = x.size()
-        H = self.n_head
-
-        r, k, v, g, w = self.jit_func(x)
-        x, s = RUN_FLA_RWKV6_STATE(B, T, C, H, r, k, v, w, u=self.time_faaaa, s=s)
-
-        return self.jit_func_2(x, g, s)
-
-
-class RWKV_Tmix_x060_HYBRID(RWKV_Tmix_x060_BASE):
-    def __init__(self, args, layer_id):
-        super().__init__(args, layer_id)
-        self.mem_read = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        # self.mem_gate = nn.Linear(args.n_embd, args.dim_att, bias=True)
-        # # init read gate to 0, bias to -8
-        # self.mem_gate.weight.data.zero_()
-        # self.mem_gate.bias.data.fill_(-8.0)
-        self.mem_proj = nn.Linear(args.n_embd, args.dim_att, bias=False)
-
-        D_MIX_LORA = 32 # generate TIME_MIX for mem_read and mem_gate
-        if args.n_embd >= 4096:
-            D_MIX_LORA = 64
-        self.time_mem_w1 = nn.Parameter(torch.zeros(args.n_embd, D_MIX_LORA*2))
-        self.time_mem_w2 = nn.Parameter(torch.zeros(2, D_MIX_LORA, args.n_embd).uniform_(-0.01, 0.01))
-
-        # fancy time_mix for memory read and memory gate
-        with torch.no_grad():
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
-            self.time_mem_r = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_mem_g = nn.Parameter(1.0 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
-
-    def mem_ddlerp(self, x):
-        # do data-dependent interpolation for memory read and memory gate
-        B, T, C = x.size()
-        xx = self.time_shift(x) - x
-        xxx = x + xx * self.time_maa_x
-        xxx = torch.tanh(xxx @ self.time_mem_w1).view(B*T, 2, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, self.time_mem_w2).view(2, B, T, -1)
-        er, eg = xxx.unbind(dim=0)
-
-        xr = x + xx * (self.time_mem_r + er)
-        xg = x + xx * (self.time_mem_g + eg)
-
-        mr = self.mem_read(xr)
-        mg = self.mem_proj(xg)
-
-        return mr, mg
-
-
-    def forward(self, x, s_img):
-        B, T, C = x.size()
-        H = self.n_head
-        
-        r, k, v, g, w = self.jit_func(x)
-        mr, mg = self.mem_ddlerp(x)
-
-        mr = mr.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
-        mg = mg.view(B, T, H, C//H).transpose(1,2)
-
-        x = RUN_CUDA_RWKV6(B, T, C, H, r, k, v, w, u=self.time_faaaa)
-        x = x.view(B, T, H, C//H).transpose(1,2) # [B, T, C] -> [B, H, T,  C//H]
-
-        mem_read_out = mr @ s_img # [B, H, T, C//H] @ [B, H, C//H, C//H] -> [B, H, T, C//H]
-
-        x_w = (mg * x).sum(-1, keepdim=True) # [B, H, T, C//H] * [B, H, T, C//H] -> [B, H, T, 1]
-        m_w = (mg * mem_read_out).sum(-1, keepdim=True) # [B, H, T, C//H] * [B, H, T, C//H] -> [B, H, T, 1]
-        # softmax for x_w and m_w
-        wm_w = torch.cat([x_w, m_w], dim=-1) # [B, H, T, 2]
-        wm_w = F.softmax(wm_w, dim=-1)
-        x = x * wm_w[..., 0:1] + mem_read_out * wm_w[..., 1:2] # [B, H, T, C//H]
-        x = x.transpose(1,2).reshape(B, T, C)
-
-        return self.jit_func_2(x, g)
 ########################################################################################################
 
 class RWKV_CMix_x060(MyModule):
@@ -332,6 +227,67 @@ class RWKV_CMix_x060(MyModule):
         return torch.sigmoid(self.receptance(xr)) * kv
     
 ########################################################################################################
+# Cross-Attention Layer
+########################################################################################################
+class CrossAttentionLayer(MyModule):
+    def __init__(self, args, layer_id):
+        super(CrossAttentionLayer, self).__init__()
+        self.args = args
+        self.layer_id = layer_id
+
+        self.head_size = args.head_size_a
+        self.n_head = args.dim_att // self.head_size
+        assert args.dim_att % self.n_head == 0
+
+        self.query = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
+        self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
+
+        self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
+        # zero output linear
+        self.output.weight.data.zero_()
+
+    def forward(self, query, key_value):
+        batch_size = query.shape[0]
+
+        # 将查询、键和值投影到多头注意力的维度
+        query = self.query(query)
+        key = self.key(key_value)
+        value = self.value(key_value)
+
+        # 拆分多头
+        query = query.view(batch_size, -1, self.n_head, self.head_size).transpose(1, 2)
+        key = key.view(batch_size, -1, self.n_head, self.head_size).transpose(1, 2)
+        value = value.view(batch_size, -1, self.n_head, self.head_size).transpose(1, 2)
+
+        # 使用scaled_dot_product_attention计算注意力
+        attn_output = F.scaled_dot_product_attention(
+            query, key, value, dropout_p=0.0, is_causal=False
+        )
+
+        # 合并多头
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, -1, self.n_head * self.head_size)
+
+        # 投影输出
+        output = self.out(attn_output)
+
+        return output
+
+class MLP(nn.Module):
+    def __init__(self, args, layer_id):
+        super().__init__()
+        self.c_fc = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+        self.relu = nn.RELU()
+        self.c_proj = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+        # zero output linear
+        self.c_proj.weight.data.zero_()
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.relu(x)
+        x = self.c_proj(x)
+        return x
+########################################################################################################
 # The RWKV Model with our blocks
 ########################################################################################################
 
@@ -348,24 +304,24 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(args.n_embd)
 
-        self.att = RWKV_Tmix_x060_HYBRID(args, layer_id)
+        self.att = RWKV_Tmix_x060(args, layer_id)
         self.ffn = RWKV_CMix_x060(args, layer_id)
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
             self.drop1 = nn.Dropout(p = args.dropout)
         
-    def forward(self, x, s):
+    def forward(self, x):
         if self.layer_id == 0:
             x = self.ln0(x)
 
-        x = x + self.att(self.ln1(x), s)
+        x = x + self.att(self.ln1(x))
         x = x + self.ffn(self.ln2(x))
 
-        return x, s
-    
+        return x
 
-class StateEncoderBlock(nn.Module):
+
+class CrossAttentionBlock(nn.Module):
     def __init__(self, args, layer_id):
         super().__init__()
         self.args = args
@@ -374,25 +330,13 @@ class StateEncoderBlock(nn.Module):
         self.ln1 = nn.LayerNorm(args.n_embd)
         self.ln2 = nn.LayerNorm(args.n_embd)
 
-        if self.layer_id == 0:
-            self.ln0 = nn.LayerNorm(args.n_embd)
-
-        self.att = RWKV_Tmix_x060_STATE(args, layer_id)
-        self.ffn = RWKV_CMix_x060(args, layer_id)
-
-        if args.dropout > 0:
-            self.drop0 = nn.Dropout(p = args.dropout)
-            self.drop1 = nn.Dropout(p = args.dropout)
+        self.att = CrossAttentionLayer(args, layer_id)
+        self.ffn = MLP(args, layer_id)
         
-    def forward(self, x, s):
-        if self.layer_id == 0:
-            x = self.ln0(x)
-
-        xx, s = self.att(self.ln1(x), s)
-        x = x + xx # skip connection
+    def forward(self, x):
+        x = x + self.att(self.ln1(x))
         x = x + self.ffn(self.ln2(x))
-
-        return x, s
+        return x
 
 
 class L2Wrap(torch.autograd.Function):
@@ -412,52 +356,73 @@ class L2Wrap(torch.autograd.Function):
         return (grad_output, gy)
 
 
-class RWKV(pl.LightningModule):
+class HybridRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
         self.emb = nn.Embedding(args.vocab_size, args.n_embd)
         self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
+        self.cross_blocks = nn.ModuleList([CrossAttentionBlock(args, i) for i in range(args.n_cross_layer)])
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
 
+    def configure_optimizers(self):
+        trainable_params = [p for p in self.parameters() if p.requires_grad]
+        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
+        if self.deepspeed_offload:
+            return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
+        return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
+
+    @property
+    def deepspeed_offload(self) -> bool:
+        strategy = self.trainer.strategy
+        if isinstance(strategy, DeepSpeedStrategy):
+            cfg = strategy.config["zero_optimization"]
+            return cfg.get("offload_optimizer") or cfg.get("offload_param")
+        return False
+
+    def forward(self, x):
+        args = self.args
+        if args.dropout > 0:
+            x = self.drop0(x)
+
+        mixed_blocks = mix_blocks(self.blocks, self.cross_blocks)
+        for block in enumerate(mixed_blocks):
+            if args.grad_cp == 1:
+                x = deepspeed.checkpointing.checkpoint(block, x)
+            else:
+                x = block(x)
+
+        x = self.ln_out(x)
+        x = self.head(x)
+        return x
+
+    def training_step(self, batch, batch_idx):
+        idx, targets = batch
+        logits = self(idx)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return L2Wrap.apply(loss, logits)
+
+    def training_step_end(self, batch_parts):
+        if pl.__version__[0]!='2':
+            all = self.all_gather(batch_parts)
+            if self.trainer.is_global_zero:
+                self.trainer.my_loss_all = all
 
 
 class MLPWithContextGating(nn.Module):
     def __init__(self, in_dim, n_embd):
         super().__init__()
-        self.proj = nn.Linear(in_dim, n_embd, bias=False)
-        self.n_embd = n_embd
-        self.gate = nn.Linear(n_embd, n_embd, bias=False)
-        self.o_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.gate = nn.Linear(in_dim, in_dim, bias=False)
+        self.o_proj = nn.Linear(in_dim, n_embd, bias=False)
 
     def forward(self, x):
         # x: [B, T, D]
-        x = self.proj(x)
         gating = torch.sigmoid(self.gate(x))
         return self.o_proj(x * gating)
-    
-
-class ImageStateEncoder(MyModule):
-    '''
-    RWKV time-mix encoder for image features
-    '''
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.blocks = nn.ModuleList([
-            StateEncoderBlock(args, i) for i in range(args.n_state_encoder_layer)
-            ])
-
-    def forward(self, x):
-        # output the last state
-        for block in self.blocks:
-            x, s = block(x, s=None)
-
-        return s
 
 
 class VisualRWKV(pl.LightningModule):
