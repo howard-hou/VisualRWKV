@@ -506,9 +506,9 @@ class VisualRWKV(pl.LightningModule):
                     x = self.rwkv.blocks[block_index](x)
                 block_index += 1
 
-        x = self.ln_out(x)
-        x = self.head(x)
-        return x
+        x = self.rwkv.ln_out(x)
+        logits = self.rwkv.head(x) # [B, T, V]
+        return logits
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
