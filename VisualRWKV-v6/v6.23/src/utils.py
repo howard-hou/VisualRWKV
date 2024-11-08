@@ -32,7 +32,7 @@ def enable_pretrain_mode(model):
     model.requires_grad_(False)
     # 2. unfreeze the cross blocks
     for block in model.rwkv.cross_blocks:
-        block.readout.requires_grad_(True)
+        block.requires_grad_(True)
     # 3. unfreeze the projection layer
     model.proj.requires_grad_(True)
 
@@ -255,6 +255,7 @@ def fold_tensor_by_layer(packed_image_features, n_layer):
 # --------------------------------------------------------
 def get_cross_block_indices(n_layer, n_cross_layer):
     """
+    get the indices of cross blocks in the model
     """
     block_index_list = list(range(n_layer+n_cross_layer))
 

@@ -19,7 +19,7 @@ if importlib.util.find_spec('deepspeed'):
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
-from .utils import get_cross_block_indices
+from .utils import get_cross_block_indices, compress_parameter_names
 
 def __nop(ob):
     return ob
@@ -269,7 +269,7 @@ class CrossAttentionLayer(MyModule):
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, -1, self.n_head * self.head_size)
 
         # 投影输出
-        output = self.out(attn_output)
+        output = self.output(attn_output)
 
         return output
 
@@ -489,21 +489,21 @@ class VisualRWKV(pl.LightningModule):
         return logits, targets
     
     def forward_with_image_features(self, x, image_features):
-        cross_block_indices = get_cross_block_indices(len(self.blocks), len(self.cross_blocks))
-        total_blocks = len(self.blocks) + len(self.cross_blocks)
+        cross_block_indices = get_cross_block_indices(len(self.rwkv.blocks), len(self.rwkv.cross_blocks))
+        total_blocks = len(self.rwkv.blocks) + len(self.rwkv.cross_blocks)
         block_index, cross_block_index = 0, 0
         for i in range(total_blocks):
             if i in cross_block_indices:
                 if self.args.grad_cp == 1:
-                    x = deepspeed.checkpointing.checkpoint(self.cross_blocks[cross_block_index], x, image_features)
+                    x = deepspeed.checkpointing.checkpoint(self.rwkv.cross_blocks[cross_block_index], x, image_features)
                 else:
-                    x = self.cross_blocks[cross_block_index](x, image_features)
+                    x = self.rwkv.cross_blocks[cross_block_index](x, image_features)
                 cross_block_index += 1
             else:
                 if self.args.grad_cp == 1:
-                    x = deepspeed.checkpointing.checkpoint(self.blocks[block_index], x)
+                    x = deepspeed.checkpointing.checkpoint(self.rwkv.blocks[block_index], x)
                 else:
-                    x = self.blocks[block_index](x)
+                    x = self.rwkv.blocks[block_index](x)
                 block_index += 1
 
         x = self.ln_out(x)
