@@ -60,11 +60,11 @@ if __name__ == "__main__":
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--num_token_per_image", type=int, default=16)
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
-    parser.add_argument("--n_state_encoder_layer", default=6, type=int)
+    parser.add_argument("--n_cross_layer", default=6, type=int)
     parser.add_argument("--state_encoder_max_feature_len", default=0, type=int)
     parser.add_argument("--state_encoder_num_token_per_image", default=0, type=int)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
-    parser.add_argument("--enable_state_encoder_pretrain_mode", default=0, type=int)  # enable state encoder pretrain mode
+    parser.add_argument("--enable_pretrain_mode", default=0, type=int)  #
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     from src.model import VisualRWKV
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
     from src.utils import (load_rwkv_from_pretrained, load_visualrwkv_from_checkpoint,
-                           enable_state_encoder_pretrain_mode)
+                           enable_pretrain_mode)
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
@@ -193,8 +193,8 @@ if __name__ == "__main__":
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
-    if args.enable_state_encoder_pretrain_mode > 0:
-        enable_state_encoder_pretrain_mode(model)
+    if args.enable_pretrain_mode > 0:
+        enable_pretrain_mode(model)
     model.freeze_emb() # freeze emb all the time
 
     # init training data

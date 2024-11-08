@@ -421,7 +421,6 @@ class VisualRWKV(pl.LightningModule):
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
         self.proj = self.init_proj(args)
-        self.state_encoder = ImageStateEncoder(args)
         
     def init_proj(self, args):
         if args.proj_type == "linear":

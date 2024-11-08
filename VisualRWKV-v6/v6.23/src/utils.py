@@ -27,20 +27,13 @@ def load_image_from_base64(image):
     return Image.open(BytesIO(base64.b64decode(image)))
 
 
-def enable_state_encoder_pretrain_mode(model):
+def enable_pretrain_mode(model):
     # 1. freeze the RWKV model
     model.requires_grad_(False)
-    # 2. unfreeze the state encoder
-    model.state_encoder.requires_grad_(True)
-    # 3. unfreeze the readout in blocks
-    for block in model.rwkv.blocks:
-        block.att.mem_read.requires_grad_(True)
-        block.att.mem_proj.requires_grad_(True)
-        block.att.time_mem_w1.requires_grad_(True)
-        block.att.time_mem_w2.requires_grad_(True)
-        block.att.time_mem_r.requires_grad_(True)
-        block.att.time_mem_g.requires_grad_(True)
-    # 4. unfreeze the projection layer
+    # 2. unfreeze the cross blocks
+    for block in model.rwkv.cross_blocks:
+        block.readout.requires_grad_(True)
+    # 3. unfreeze the projection layer
     model.proj.requires_grad_(True)
 
 
