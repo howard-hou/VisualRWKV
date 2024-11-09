@@ -253,18 +253,16 @@ def fold_tensor_by_layer(packed_image_features, n_layer):
     return folded_tensor
 
 # --------------------------------------------------------
-def get_cross_block_indices(n_layer, n_cross_layer):
+def get_cross_block_indices(n_layer, n_cross_layer, cross_layer_interval):
     """
     get the indices of cross blocks in the model
+    each interval contains one cross block and interval-1 layer rwkv block
     """
     block_index_list = list(range(n_layer+n_cross_layer))
-
-    # interval: every n block + a cross block
-    interval = n_layer // n_cross_layer + 1
 
     # cross block at the end
     cross_block_indices = []
     for i in range(n_cross_layer):
-        cross_block_indices.append(block_index_list[-1] - interval * i)
+        cross_block_indices.append(block_index_list[-1] - cross_layer_interval * i)
 
     return cross_block_indices

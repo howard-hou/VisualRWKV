@@ -421,6 +421,10 @@ class VisualRWKV(pl.LightningModule):
         self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
         self.freeze_vit()
         self.proj = self.init_proj(args)
+        self.cross_block_indices = get_cross_block_indices(
+            len(self.rwkv.blocks), len(self.rwkv.cross_blocks), args.cross_layer_interval
+        )
+        rank_zero_info(f"Cross block indices: {self.cross_block_indices}")
         
     def init_proj(self, args):
         if args.proj_type == "linear":
@@ -489,11 +493,10 @@ class VisualRWKV(pl.LightningModule):
         return logits, targets
     
     def forward_with_image_features(self, x, image_features):
-        cross_block_indices = get_cross_block_indices(len(self.rwkv.blocks), len(self.rwkv.cross_blocks))
         total_blocks = len(self.rwkv.blocks) + len(self.rwkv.cross_blocks)
         block_index, cross_block_index = 0, 0
         for i in range(total_blocks):
-            if i in cross_block_indices:
+            if i in self.cross_block_indices:
                 if self.args.grad_cp == 1:
                     x = deepspeed.checkpointing.checkpoint(self.rwkv.cross_blocks[cross_block_index], x, image_features)
                 else:
