@@ -56,6 +56,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
+    parser.add_argument("--vision_tower_name", default="SamDinoSigLIP", type=str, choices=["SigLIP", "SamDinoSigLIP"])
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
     parser.add_argument("--num_token_per_image", type=int, default=16)
@@ -182,7 +183,9 @@ if __name__ == "__main__":
     from src.config import VISION_TOWER_CHECKPOINT_NAMES
     from src.utils import (load_rwkv_from_pretrained, load_visualrwkv_from_checkpoint,
                            enable_pretrain_mode)
-    args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
+    args.vision_tower_path = {
+        name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()
+    }
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()

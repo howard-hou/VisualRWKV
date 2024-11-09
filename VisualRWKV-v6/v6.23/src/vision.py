@@ -11,10 +11,9 @@ import timm
 import torch
 import torch.nn as nn
 from PIL import Image
-from timm.models.vision_transformer import VisionTransformer
 from torchvision.transforms import Compose, Resize
 from .sam import build_sam_vit_b
-from transformers import AutoImageProcessor
+from pytorch_lightning.utilities import rank_zero_info
 
 # base_vision
 ########################################################################################################
@@ -101,7 +100,7 @@ class SamDinoSigLIPViTBackbone(nn.Module):
                 *default_dino_transform.transforms[2:],
             ]
         )
-        print('dino_transform:', dino_transform)
+        rank_zero_info('dino_transform:', dino_transform)
         siglip_transform = Compose(
             [
                 Resize(sig_target_size, interpolation=default_siglip_transform.transforms[0].interpolation),
@@ -109,14 +108,14 @@ class SamDinoSigLIPViTBackbone(nn.Module):
 
             ]
         )
-        print('siglip_transform:', siglip_transform)
+        rank_zero_info('siglip_transform:', siglip_transform)
         sam_transform = Compose(
             [
                 Resize(sam_target_size, interpolation=default_dino_transform.transforms[0].interpolation),
                 *default_dino_transform.transforms[2:],
             ]
         )
-        print('default_sam_transform:', sam_transform)
+        rank_zero_info('default_sam_transform:', sam_transform)
         self.image_transform = SamDinoSigLIPImageTransform(dino_transform, siglip_transform, sam_transform)
 
 
@@ -148,6 +147,74 @@ class SamDinoSigLIPViTBackbone(nn.Module):
     def num_patches(self) -> int:
         assert self.dino_featurizer.patch_embed.num_patches == self.siglip_featurizer.patch_embed.num_patches
         return self.dino_featurizer.patch_embed.num_patches
+
+    @property
+    def half_precision_dtype(self) -> torch.dtype:
+        return torch.bfloat16
+    
+
+class SigLIPBackbone(nn.Module):
+    def __init__(self, vision_tower_path: dict, default_image_size: int = 448) -> None:
+        super().__init__()
+        self.default_image_size = default_image_size
+        self.siglip_timm_path_or_url = "vit_so400m_patch14_siglip_384"
+
+        # Initialize both Featurizers (ViTs) by downloading from HF / TIMM Hub if necessary
+        self.siglip_featurizer = timm.create_model(
+            self.siglip_timm_path_or_url, pretrained=True,  num_classes=0, img_size=default_image_size,
+            pretrained_cfg_overlay=dict(file=vision_tower_path['siglip'])
+        )
+        self.siglip_featurizer.eval()
+        # Monkey-Patch the `forward()` function of the featurizers to ensure FSDP-compatibility
+        #   => Note: By default set `get_intermediate_layers` to return the *SECOND-TO-LAST* layer patches!
+        #   => TODO (siddk) Remove after resolution of https://github.com/pytorch/pytorch/issues/109385
+        self.siglip_featurizer.forward = unpack_tuple(
+            partial(self.siglip_featurizer.get_intermediate_layers, n={len(self.siglip_featurizer.blocks) - 2})
+        )
+
+        # Get Configs for _both_ Featurizers =>> Note :: Override default image size for larger resolution models
+
+        self.siglip_data_cfg = timm.data.resolve_model_data_config(self.siglip_featurizer)
+        self.siglip_data_cfg["input_size"] = (3, self.default_image_size, self.default_image_size)
+
+        # Initialize *both* Transformszh
+        default_siglip_transform = timm.data.create_transform(**self.siglip_data_cfg, is_training=False)
+        #default_sam_transform = AutoImageProcessor.from_pretrained('facebook/sam-vit-base')
+
+        sig_target_size = (self.default_image_size, self.default_image_size)
+        siglip_transform = Compose(
+            [
+                Resize(sig_target_size, interpolation=default_siglip_transform.transforms[0].interpolation),
+                *default_siglip_transform.transforms[2:],
+
+            ]
+        )
+        rank_zero_info('siglip_transform:', siglip_transform)
+        # 这里用dummy的dino和sam transform，为了省事，后面会用到的时候再改
+        self.image_transform = SamDinoSigLIPImageTransform(siglip_transform, siglip_transform, siglip_transform)
+
+
+    def forward(self, pixel_values: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Runs the transformed image/pixel tensors through each vision backbone, returning concatenated patches."""
+
+        siglip_patches = self.siglip_featurizer(pixel_values["siglip"])
+        if isinstance(siglip_patches, list):
+            siglip_patches = siglip_patches[0]
+        return siglip_patches
+
+    def get_image_transform(self) -> ImageTransform:
+        return self.image_transform
+
+    @property
+    def default_image_resolution(self) -> Tuple[int, int, int]:
+        return self.dino_data_cfg["input_size"]
+
+    @property
+    def embed_dim(self) -> int:
+        return self.siglip_featurizer.embed_dim
+    @property
+    def num_patches(self) -> int:
+        return self.siglip_featurizer.patch_embed.num_patches
 
     @property
     def half_precision_dtype(self) -> torch.dtype:

@@ -18,7 +18,7 @@ if importlib.util.find_spec('deepspeed'):
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
-from .vision import SamDinoSigLIPViTBackbone
+from .vision import SamDinoSigLIPViTBackbone, SigLIPBackbone
 from .utils import get_cross_block_indices, compress_parameter_names
 
 def __nop(ob):
@@ -413,12 +413,17 @@ class MLPWithContextGating(nn.Module):
         return self.ln_v(self.o_proj(x * gating))
 
 
+ViTBackbone = {
+    "SamDinoSigLIP": SamDinoSigLIPViTBackbone,
+    "SigLIP": SigLIPBackbone,
+}
+
 class VisualRWKV(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
         self.rwkv = HybridRWKV(args)
-        self.vit = SamDinoSigLIPViTBackbone(args.vision_tower_path)
+        self.vit = ViTBackbone[args.vision_tower_name](args.vision_tower_path)
         self.freeze_vit()
         self.proj = self.init_proj(args)
         self.cross_block_indices = get_cross_block_indices(
