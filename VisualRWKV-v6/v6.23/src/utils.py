@@ -263,6 +263,9 @@ def get_cross_block_indices(n_layer, n_cross_layer, cross_layer_interval):
     # cross block at the end
     cross_block_indices = []
     for i in range(n_cross_layer):
-        cross_block_indices.append(block_index_list[-1] - cross_layer_interval * i)
+        cross_block_index = block_index_list[-1] - cross_layer_interval * i
+        if cross_block_index < 0:
+            raise ValueError(f"cross block index is negative, please decrease the cross_layer_interval: {cross_layer_interval}")
+        cross_block_indices.append(cross_block_index)
 
     return cross_block_indices
