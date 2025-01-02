@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 if __name__ == "__main__":
     from argparse import ArgumentParser
     from pytorch_lightning import Trainer
-    from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+    from pytorch_lightning.utilities import rank_zero_info
     import pytorch_lightning as pl
 
     rank_zero_info("########## work in progress ##########")
@@ -62,15 +62,7 @@ if __name__ == "__main__":
     parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
-    if pl.__version__[0]=='2':
-        parser.add_argument("--accelerator", default="gpu", type=str)
-        parser.add_argument("--strategy", default="auto", type=str)
-        parser.add_argument("--devices", default=1, type=int)
-        parser.add_argument("--num_nodes", default=1, type=int)
-        parser.add_argument("--precision", default="fp16", type=str)
-        parser.add_argument("--accumulate_grad_batches", default=1, type=int)
-    else:
-        parser = Trainer.add_argparse_args(parser)
+    parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     ########################################################################################################
@@ -138,7 +130,7 @@ if __name__ == "__main__":
 #
 # Adam = lr {args.lr_init} to {args.lr_final}, warmup {args.warmup_steps} steps, beta {args.betas}, eps {args.adam_eps}
 #
-# Found torch {torch.__version__}, recommend 1.13.1+cu117 or newer
+# Found torch {torch.__version__}, recommend 2.4.0 or newer
 # Found deepspeed {deepspeed_version}, recommend 0.7.0 (faster than newer versions)
 # Found pytorch_lightning {pl.__version__}, recommend 1.9.5
 #
@@ -208,29 +200,7 @@ if __name__ == "__main__":
     args.image_processor = model.vit.get_image_transform()
     train_data = MyDataset(args)
 
-    if pl.__version__[0]=='2':
-        trainer = Trainer(
-            accelerator=args.accelerator,
-            strategy=args.strategy,
-            devices=args.devices,
-            num_nodes=args.num_nodes,
-            precision=args.precision,
-            logger=args.logger,
-            callbacks=[train_callback(args)],
-            max_epochs=args.max_epochs,
-            check_val_every_n_epoch=args.check_val_every_n_epoch,
-            num_sanity_val_steps=args.num_sanity_val_steps,
-            log_every_n_steps=args.log_every_n_steps,
-            enable_checkpointing=args.enable_checkpointing,
-            accumulate_grad_batches=args.accumulate_grad_batches,
-            gradient_clip_val=args.gradient_clip_val,
-            enable_progress_bar=args.enable_progress_bar,
-        )
-    else:
-        trainer = Trainer.from_argparse_args(
-            args,
-            callbacks=[train_callback(args)],
-        )
+    trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])
 
     if trainer.global_rank == 0 and args.print_param_shape > 0:
         for n in model.state_dict():

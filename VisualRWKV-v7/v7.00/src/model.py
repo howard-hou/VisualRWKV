@@ -282,13 +282,6 @@ class RWKV(pl.LightningModule):
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
 
-    def configure_optimizers(self):
-        trainable_params = [p for p in self.parameters() if p.requires_grad]
-        optim_groups = [{"params": trainable_params, "weight_decay": self.args.weight_decay}]
-        if self.deepspeed_offload:
-            return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=True, amsgrad=False)
-        return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
-
     @property
     def deepspeed_offload(self) -> bool:
         strategy = self.trainer.strategy
@@ -343,7 +336,7 @@ class VisualRWKV(pl.LightningModule):
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
 
     def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu"))
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
@@ -422,7 +415,7 @@ class VisualRWKV(pl.LightningModule):
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):
-        if pl.__version__[0]!='2':
+        if pl.__version__[0] != '2':
             all = self.all_gather(batch_parts)
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all

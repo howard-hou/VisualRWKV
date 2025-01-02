@@ -3,11 +3,10 @@
 ########################################################################################################
 
 import json, os, re, copy
-import numpy as np
 from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
+from pytorch_lightning.utilities import rank_zero_info
 from typing import Dict, List, Sequence, Any
 from collections import defaultdict
 from pathlib import Path
@@ -163,6 +162,7 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image
     if do_pad_to_max_length:
         input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
     return dict(input_ids=input_ids, labels=targets, input_text=input_text)
+
 
 class MyDataset(Dataset):
     def __init__(self, args):
