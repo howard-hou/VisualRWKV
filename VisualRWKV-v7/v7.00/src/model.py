@@ -17,7 +17,7 @@ if importlib.util.find_spec('deepspeed'):
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
-from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX
+from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX
 from .vision import SamDinoSigLIPViTBackbone
 from .utils import compress_parameter_names
 
@@ -193,7 +193,7 @@ class RWKV_Tmix_x070(nn.Module):
         x = x + ((r.view(B,T,H,-1)*k.view(B,T,H,-1)*self.r_k).sum(dim=-1, keepdim=True) * v.view(B,T,H,-1)).view(B,T,C)
         x = self.output(x * g)
         return x, v_first
-    
+
 ########################################################################################################
 # RWKV ChannelMix
 ########################################################################################################
@@ -283,19 +283,36 @@ class RWKV(pl.LightningModule):
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
 
-    @property
-    def deepspeed_offload(self) -> bool:
-        strategy = self.trainer.strategy
-        if isinstance(strategy, DeepSpeedStrategy):
-            cfg = strategy.config["zero_optimization"]
-            return cfg.get("offload_optimizer") or cfg.get("offload_param")
-        return False
+    def pad_left(self, x, num_tokens_to_pad):
+        # pad left with eos token embedding
+        if num_tokens_to_pad != 0:
+            # left padding by add eos token at the beginning
+            eos_idx = torch.full(
+                (x.size(0), num_tokens_to_pad),
+                STOP_TOKEN_INDEX,
+                dtype=torch.long,
+                device=x.device,
+            )
+            eos_emb = self.emb(eos_idx)
+            x = torch.cat((eos_emb, x), dim=1)
+        return x
+
+    def unpad(self, x, num_tokens_to_pad):
+        # unpad
+        if num_tokens_to_pad > 0:
+            x = x[:, num_tokens_to_pad:]
+        return x
 
     def forward(self, x):
         args = self.args
+
+        num_tokens_to_pad = (
+            CHUNK_LEN - x.size(1) % CHUNK_LEN if x.size(1) % CHUNK_LEN != 0 else 0
+        )
+        x = self.pad_left(x, num_tokens_to_pad)
         if args.dropout > 0:
             x = self.drop0(x)
-            
+
         v_first = torch.empty_like(x)
         for block in self.blocks:
             if args.grad_cp == 1:
@@ -305,7 +322,7 @@ class RWKV(pl.LightningModule):
 
         x = self.ln_out(x)
         x = self.head(x)
-        return x
+        return self.unpad(x, num_tokens_to_pad)
 
 
 class MLPWithContextGating(nn.Module):
@@ -486,9 +503,9 @@ class VisualRWKV(pl.LightningModule):
         # max_new_tokens: int
         '''
         # prepare samples
-        sampels = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
+        samples = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(sampels)
+        x, _ = self.preparing_embedding(samples)
         # generate
         generated_tokens = []
         generated_token_logits = []

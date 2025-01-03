@@ -11,7 +11,7 @@ import torch
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
-from src.rwkv_tokenizer import TRIE_TOKENIZER
+from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, select_best_resolution, POSSIBLE_RESOLUTIONS, single_image_to_multi_image_strategy
@@ -72,15 +72,22 @@ def get_input_text(line, num_images):
     image_prifix = "\n".join(num_images * [DEFAULT_IMAGE_TOKEN])
     input_text = image_prifix + "\n" + input_text
     return input_text
+
+
+def get_single_image_dict(line, image_folder, image_processor):
+    image_dict = {}
+    if "image" in line:
+        image = Image.open(image_folder /  line["image"]).convert("RGB")
+        pixel_values = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
+        # unsqueeze to add batch dimension
+        for key in pixel_values:
+            image_dict[key] = pixel_values[key].unsqueeze(0)
+    else:
+        raise ValueError("no key 'image' in line: {}".format(line))
+    return image_dict
     
 
-def get_input_image_dict(line, image_folder, image_processor):
-    # assert "image" in line or "video" in line, and not ("image" in line and "video" in line)
-    if "image" not in line and "video" not in line:
-        raise ValueError("Cannot find image or video in line: {}".format(line))
-    if "image" in line and "video" in line:
-        raise ValueError("Both image and video are found in line: {}".format(line))
-
+def get_single2multi_image_dict(line, image_folder, image_processor):
     image_dict = {}
     if "image" in line:
         image = Image.open(image_folder /  line["image"]).convert("RGB")
@@ -94,6 +101,13 @@ def get_input_image_dict(line, image_folder, image_processor):
         # merge by key
         for key in pixel_values:
             image_dict[key] = torch.stack(pixel_values[key], dim=0)
+    else:
+        raise ValueError("no key 'image' in line: {}".format(line))
+    return image_dict
+
+
+def get_video_image_dict(line, image_folder, image_processor):
+    image_dict = {}
     if "video" in line:
         video_folder = image_folder / line["video"]
         video_frames = sorted(video_folder.rglob("*.jpg"))
@@ -115,6 +129,8 @@ def get_input_image_dict(line, image_folder, image_processor):
         # merge by key
         for key in pixel_values:
             image_dict[key] = torch.stack(pixel_values[key], dim=0)
+    else:
+        raise ValueError("no key 'video' in line: {}".format(line))
     return image_dict
 
 
@@ -125,10 +141,10 @@ def eval_model(args):
     args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)
-    msg = model.load_state_dict(torch.load(model_path), strict=False)
+    msg = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
-    tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
+    tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
     image_processor = model.vit.get_image_transform()
 
     questions = load_questions(args.question_file)
@@ -141,9 +157,12 @@ def eval_model(args):
     pbar = tqdm(total=len(questions))
     update_every = len(questions) // 100
     for i, line in enumerate(questions):
+        # skip if no image or video line
+        if 'image' not in line and 'video' not in line:
+            continue
         idx = get_question_id(line)
         #
-        image_dict = get_input_image_dict(line, image_folder, image_processor)
+        image_dict = get_single_image_dict(line, image_folder, image_processor)
         for k in image_dict:
             image_dict[k] = image_dict[k].bfloat16().to(args.device)
             num_images = image_dict[k].shape[0]
@@ -200,7 +219,7 @@ def eval_model(args):
                               "avg_prob": str(round(avg_prob, 3)),
                               "model_id": model_name,
                               "metadata": {
-                                  **line['metadata'],
+                                  **line.get("metadata", {}),
                                   "image_file": line.get("image", None),
                               }}, ensure_ascii=False)
         out_file.write(out_str + "\n")
@@ -227,9 +246,8 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
     parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
-    parser.add_argument("--grid_size", type=int, default=8) # -1 for no grid, 0 for cls token, 1 for global avg, 8 for 64 tokens
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
-    parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument("--proj_type", default='mlp', type=str, choices=['linear', 'mlp'])
     parser.add_argument("--num_token_per_image", type=int, default=16)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
