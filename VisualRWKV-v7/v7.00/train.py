@@ -181,7 +181,7 @@ if __name__ == "__main__":
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()
     if args.model_path:
-        raw_model = torch.load(args.model_path, map_location='cpu')
+        raw_model = torch.load(args.model_path, map_location='cpu', weights_only=True)
         # use pos_embed from pretrained model
         if "vit.dino_featurizer.pos_embed" in raw_model:
             del raw_model["vit.dino_featurizer.pos_embed"]
