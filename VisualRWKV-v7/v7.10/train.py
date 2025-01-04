@@ -57,6 +57,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_folder", type=str, default="images")
     parser.add_argument("--enable_pretrain_mode", default=0, type=int)  
     parser.add_argument("--patch_size", type=int, default=16)
+    parser.add_argument("--image_size", type=int, default=256)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
     parser = Trainer.add_argparse_args(parser)
@@ -187,10 +188,12 @@ if __name__ == "__main__":
     # init training data
     args.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
     args.image_processor = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((args.image_size, args.image_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     ])
+    args.num_token_per_image = (args.image_size // args.patch_size) ** 2
+    rank_zero_info(f"image size: {args.image_size}, patch size: {args.patch_size}, num token per image: {args.num_token_per_image}")
     train_data = MyDataset(args)
 
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])

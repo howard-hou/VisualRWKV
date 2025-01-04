@@ -9,7 +9,7 @@ echo "Current working directory: $(pwd)"
 
 
 python train.py --model_path out/rwkv0b1-v0700_pretrain/rwkv-1.pth \
-    --wandb "rwkv0b1-v0700_mix665k" --proj_dir out/rwkv0b1-v0700_mix665k \
+    --wandb "rwkv0b1-v0710_mix665k" --proj_dir out/rwkv0b1-v0710_mix665k \
     --data_file /home/rwkvos/howardhwhou/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k_5rounds.json \
     --data_type "json" --vocab_size 65536 \
     --ctx_len 2048 --epoch_steps 1000 --epoch_count 15 --epoch_begin 0 --epoch_save 7 \

@@ -339,7 +339,7 @@ class VisualRWKV(pl.LightningModule):
         self.patch_embed = nn.Conv2d(3, args.n_embd, kernel_size=args.patch_size, stride=args.patch_size)
 
     def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
@@ -409,7 +409,7 @@ class VisualRWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
     
     def encode_images(self, images: dict) -> torch.Tensor:
-        return self.patch_embed(images['siglip']).flatten(2).transpose(1, 2)
+        return self.patch_embed(images['image']).flatten(2).transpose(1, 2)
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
@@ -417,7 +417,7 @@ class VisualRWKV(pl.LightningModule):
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
         B_IMG, L_IMG, D_IMG = image_features.shape
-        image_features = image_features.view(-1, D_IMG)
+        image_features = image_features.reshape(B_IMG*L_IMG, D_IMG)
         ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
         B, L, D = input_embeds.shape
@@ -432,7 +432,7 @@ class VisualRWKV(pl.LightningModule):
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"], selected
+        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L).unsqueeze(-1) 
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time

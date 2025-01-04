@@ -27,12 +27,10 @@ def multi_image_collate_fn(batch):
     labels = torch.stack([x['labels'] for x in batch])
     sample_id = [str(x['sample_id']) for x in batch]
     # concatenate images
-    all_dino = torch.cat([x['images']['dino'] for x in batch if 'images' in x], dim=0)
-    all_sam = torch.cat([x['images']['sam'] for x in batch if 'images' in x], dim=0)
-    all_siglip = torch.cat([x['images']['siglip'] for x in batch if 'images' in x], dim=0)
+    all_image = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
     # the num of images of each sample
-    num_image_per_sample = [len(x['images']['dino']) for x in batch if 'images' in x]
-    images = {"dino": all_dino, "sam": all_sam, "siglip": all_siglip, 'num_image_per_sample': num_image_per_sample}
+    num_image_per_sample = [len(x['images']) for x in batch if 'images' in x]
+    images = {"image": all_image, 'num_image_per_sample': num_image_per_sample}
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
 
 
@@ -202,16 +200,13 @@ class MyDataset(Dataset):
             num_image_paths = len(image_paths)
             # try and except to handle the case where the image is not found or not readable
             try:
-                pixel_values = defaultdict(list)
+                pixel_values = list()
                 for image_path in image_paths:
                     image = Image.open(image_path).convert('RGB')
-                    pixel_value = args.image_processor(image)
-                    for key in pixel_value:
-                        pixel_values[key].append(pixel_value[key])
-                # merge by key
-                merged_pixel_values = {}
-                for key in pixel_values:
-                    merged_pixel_values[key] = torch.stack(pixel_values[key], dim=0)
+                    pixel_value = args.image_processor(image) # (c, h, w)
+                    pixel_values.append(pixel_value)
+                # merge by stacking -> (b, c, h, w)
+                merged_pixel_values = torch.stack(pixel_values, dim=0)
                 is_image_available = True
             except:
                 rank_zero_info(f"Image {image_paths} not available or not readable, use zero tensor instead.")
@@ -235,11 +230,7 @@ class MyDataset(Dataset):
             if is_image_available:
                 data_dict['images'] = merged_pixel_values
             else:
-                data_dict['images'] = {
-                    "dino":torch.zeros(num_image_paths, 3, 448, 448), 
-                    "siglip":torch.zeros(num_image_paths, 3, 448, 448), 
-                    "sam":torch.zeros(num_image_paths, 3, 1024, 1024)
-                    }
+                data_dict['images'] = torch.zeros(num_image_paths, 3, args.image_size, args.image_size)
 
         # add sample_id
         data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
