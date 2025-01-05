@@ -8,6 +8,7 @@ import numpy as np
 import math
 import argparse
 import torch
+from torchvision import transforms
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
@@ -15,7 +16,6 @@ from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
 from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
 from src.dataset import process_image_tokens_in_conversations, preprocess
 from src.utils import Conversation, select_best_resolution, POSSIBLE_RESOLUTIONS, single_image_to_multi_image_strategy
-from src.config import VISION_TOWER_CHECKPOINT_NAMES
 
 
 def split_list(lst, n):
@@ -81,10 +81,7 @@ def get_single_image_dict(line, image_folder, image_processor):
     image_dict = {}
     if "image" in line:
         image = Image.open(image_folder /  line["image"]).convert("RGB")
-        pixel_values = image_processor(image) # dict with keys 'dino' and 'siglip' and 'sam'
-        # unsqueeze to add batch dimension
-        for key in pixel_values:
-            image_dict[key] = pixel_values[key].unsqueeze(0)
+        image_dict['image'] = image_processor(image).unsqueeze(0)
     else:
         raise ValueError("no key 'image' in line: {}".format(line))
     return image_dict
@@ -141,14 +138,18 @@ def eval_model(args):
     from src.model import VisualRWKV
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
-    args.vision_tower_path = {name: Path(args.vision_tower_dir) / path for name, path in VISION_TOWER_CHECKPOINT_NAMES.items()}
     # Model
     model = VisualRWKV(args)
     msg = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
     print("msg of loading model: ", msg)
     model = model.bfloat16().to(args.device)
     tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
-    image_processor = model.vit.get_image_transform()
+    image_processor = transforms.Compose([
+        transforms.Resize((args.image_size, args.image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+    num_token_per_image = (args.image_size // args.patch_size) ** 2
 
     questions = load_questions(args.question_file)
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
@@ -186,7 +187,7 @@ def eval_model(args):
             tokenizer,
             has_image=True,
             ctx_len=args.ctx_len,
-            num_token_per_image=args.num_token_per_image,
+            num_token_per_image=num_token_per_image,
             pad_token_id=0,
             do_pad_to_max_length=False)
         
@@ -248,10 +249,9 @@ if __name__ == "__main__":
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
-    parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
-    parser.add_argument("--proj_type", default='mlp', type=str, choices=['linear', 'mlp'])
-    parser.add_argument("--num_token_per_image", type=int, default=16)
+    parser.add_argument("--patch_size", type=int, default=16)
+    parser.add_argument("--image_size", type=int, default=256)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--image_folder", type=str, default=None)

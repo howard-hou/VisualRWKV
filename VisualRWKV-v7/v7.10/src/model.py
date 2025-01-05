@@ -252,10 +252,11 @@ class Block(nn.Module):
 
         xx, v_first = self.att(self.ln1(x), v_first)
         x = x + xx
-        x_t = self.ffn(self.ln2(x)) * mask.logical_not()
-        x_v = self.ffn_v(self.ln_v(x)) * mask
-        x = x + x_t + x_v
-        return x, v_first
+        # Process separately and combine results
+        x_out = torch.empty_like(x)
+        x_out[~mask] = self.ffn(self.ln2(x[~mask]))
+        x_out[mask] = self.ffn_v(self.ln_v(x[mask]))
+        return x_out, v_first
 
 
 class L2Wrap(torch.autograd.Function):
@@ -314,6 +315,8 @@ class RWKV(pl.LightningModule):
             CHUNK_LEN - x.size(1) % CHUNK_LEN if x.size(1) % CHUNK_LEN != 0 else 0
         )
         x = self.pad_left(x, num_tokens_to_pad)
+        #pad mask (B, T, 1) to match the shape of x in T dim with left padding
+        mask = torch.cat((torch.zeros_like(mask[:, :num_tokens_to_pad]), mask), dim=1)
         if args.dropout > 0:
             x = self.drop0(x)
 
@@ -432,7 +435,7 @@ class VisualRWKV(pl.LightningModule):
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L).unsqueeze(-1) 
+        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L)
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
@@ -446,13 +449,13 @@ class VisualRWKV(pl.LightningModule):
         # prepare samples
         samples = {"input_ids": input_ids, "images": images, "labels": torch.full_like(input_ids, IGNORE_INDEX)}
         # prepare embedding, x: [1, seq_len, n_embd]
-        x, _ = self.preparing_embedding(samples)
+        x, _, masks = self.preparing_embedding(samples)
         # generate
         generated_tokens = []
         generated_token_logits = []
         generated_token_probs = []
         for i in range(max_new_tokens):
-            logits = self.rwkv(x)[:, -1, :]
+            logits = self.rwkv(x, masks)[:, -1, :]
             if do_sample:
                 raise NotImplementedError
             else: # greedy
@@ -466,6 +469,8 @@ class VisualRWKV(pl.LightningModule):
             generated_token_probs.append(next_token_prob.item())
             if generated_tokens[-1] == stop_token_idx:
                 break
-            x = torch.cat((x, self.rwkv.emb(next_token)), dim=-2)
+            x = torch.cat((x, self.rwkv.emb(next_token)), dim=1)
             x = x[:, -self.args.ctx_len:, :] # truncate
+            masks = torch.cat((masks, torch.zeros_like(masks[:, -1:])), dim=1)
+            masks = masks[:, -self.args.ctx_len:, :]
         return generated_tokens, generated_token_logits, generated_token_probs
