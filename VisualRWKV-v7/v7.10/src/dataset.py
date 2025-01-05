@@ -3,6 +3,7 @@
 ########################################################################################################
 
 import json, os, re, copy
+import numpy as np
 from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
@@ -162,15 +163,25 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image
     return dict(input_ids=input_ids, labels=targets, input_text=input_text)
 
 
+def get_sample_idx_mapping_for_epoch(data_size, epoch_count=100):
+    ''' each epoch, we use the same data, but in different order '''
+    # set seed
+    np.random.seed(222)
+    sample_idx_mapping = {}
+    for epoch in range(epoch_count):
+        sample_idx_mapping[epoch] = np.random.permutation(data_size)
+    return sample_idx_mapping
+
+
 class MyDataset(Dataset):
     def __init__(self, args):
         self.args = args
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
         self.list_data_dict = json.load(open(args.data_file, "r"))
-        # shuffle the data, but deterministically
-        self.list_data_dict_reverse = [x for x in reversed(self.list_data_dict)]
         self.data_size = len(self.list_data_dict)
+        # shuffle the data, avoid overfitting
+        self.sample_idx_mapping = get_sample_idx_mapping_for_epoch(self.data_size)
         self.magic_prime = largest_3n_plus_2_prime(self.data_size)
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
 
@@ -185,12 +196,13 @@ class MyDataset(Dataset):
         step = epoch * self.samples_per_epoch + (idx * world_size) + rank
         # use a magic prime to sample the dataset deterministically yet randomly enough
         sample_idx = (step * step * step) % self.magic_prime
-        # first epoch use the original data, then use the reversed data(avoid overfitting)
-        # normally, we don't train for more than 2 epoch
+        # first epoch use the original data, then use the sampled data(avoid overfitting)
         if step < self.magic_prime: # first epoch
             sample = self.list_data_dict[sample_idx]
-        else: # when step >= self.magic_prime, means the second epoch
-            sample = self.list_data_dict_reverse[sample_idx]
+        else: # when step >= self.magic_prime, we use the shuffled data
+            real_epoch = step // self.magic_prime
+            real_sample_idx = self.sample_idx_mapping[real_epoch][sample_idx]
+            sample = self.list_data_dict[real_sample_idx]
 
         if 'image' in sample:
             if isinstance(sample['image'], str):
