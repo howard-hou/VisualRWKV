@@ -253,10 +253,11 @@ class Block(nn.Module):
         xx, v_first = self.att(self.ln1(x), v_first)
         x = x + xx
         # Process separately and combine results
-        x_out = torch.empty_like(x)
+        x_out = x.clone()
         x_out[~mask] = self.ffn(self.ln2(x[~mask]))
         x_out[mask] = self.ffn_v(self.ln_v(x[mask]))
-        return x_out, v_first
+        x = x + x_out
+        return x, v_first
 
 
 class L2Wrap(torch.autograd.Function):
