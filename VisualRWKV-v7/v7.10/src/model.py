@@ -247,16 +247,18 @@ class Block(nn.Module):
         self.ffn_v = RWKV_CMix_x070(args, layer_id)
         
     def forward(self, x, mask, v_first):
+        """
+        x: [B, T, C]
+        mask: [B, T, 1]
+        v_first: [B, T, C]
+        """
         if self.layer_id == 0:
             x = self.ln0(x)
 
         xx, v_first = self.att(self.ln1(x), v_first)
         x = x + xx
         # Process separately and combine results
-        x_out = x.clone()
-        x_out[~mask] = self.ffn(self.ln2(x[~mask]))
-        x_out[mask] = self.ffn_v(self.ln_v(x[mask]))
-        x = x + x_out
+        x = x + torch.where(mask, self.ffn_v(self.ln_v(x)), self.ffn(self.ln2(x)))
         return x, v_first
 
 
@@ -436,7 +438,7 @@ class VisualRWKV(pl.LightningModule):
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L)
+        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L).unsqueeze(-1)
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
