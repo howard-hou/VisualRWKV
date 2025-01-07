@@ -177,6 +177,8 @@ if __name__ == "__main__":
     # 256gb cpu memory is not enough for 8 gpus
     # to use 6 gpus on 256gb cpu memory, use .half() to save memory
     model = VisualRWKV(args).half()
+    if args.load_model:
+        model.from_pretrained(args.load_model)
     if args.model_path:
         raw_model = torch.load(args.model_path, map_location='cpu', weights_only=True)
         msg = model.load_state_dict(raw_model, strict=False)

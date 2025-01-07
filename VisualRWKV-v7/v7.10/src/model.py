@@ -340,11 +340,9 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
-        if len(args.load_model) > 0:
-            self.load_rwkv_from_pretrained(args.load_model)
         self.patch_embed = nn.Conv2d(3, args.n_embd, kernel_size=args.patch_size, stride=args.patch_size)
 
-    def load_rwkv_from_pretrained(self, path):
+    def from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 

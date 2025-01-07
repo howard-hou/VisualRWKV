@@ -65,14 +65,14 @@ def get_question_id(line):
         raise ValueError("Cannot find question id in line: {}".format(line))
 
 
-def get_input_text(line, num_images):
+def get_input_text(line, num_images, dataset_name):
     input_text = line["text"] if "text" in line else line["conversations"][0]["value"]
     # remove DEFAULT_IMAGE_TOKEN
     input_text = input_text.replace(DEFAULT_IMAGE_TOKEN, "").strip()
     # add <image> tokens
     image_prifix = "\n".join(num_images * [DEFAULT_IMAGE_TOKEN])
     input_text = image_prifix + "\n" + input_text
-    if 'conversations' in line: # special case for scienceqa
+    if 'conversations' in line and dataset_name == 'scienceqa': # special case for scienceqa
         input_text += "\n" + "Answer with the option's letter from the given choices directly."
     return input_text
 
@@ -171,7 +171,7 @@ def eval_model(args):
             num_images = image_dict[k].shape[0]
             #print(f"image_dict[{k}].shape: {image_dict[k].shape}")
         
-        input_text = get_input_text(line, num_images=num_images)
+        input_text = get_input_text(line, num_images=num_images, dataset_name=args.dataset_name)
 
         conv = Conversation(id=idx, roles=["human", "gpt"], conversations=[])
         conv.append_message(conv.roles[0], input_text)
