@@ -287,6 +287,7 @@ class RWKV(pl.LightningModule):
         self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
+        self.cls_head = nn.Linear(args.n_embd, 1000) # for imagenet classification
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
@@ -331,8 +332,10 @@ class RWKV(pl.LightningModule):
                 x, v_first = block(x, mask, v_first)
 
         x = self.ln_out(x)
-        x = self.head(x)
-        return self.unpad(x, num_tokens_to_pad)
+        x_v = x[mask[:, :, 0]].view(x.size(0), -1, x.size(2)) #mask[:, :, 0]->[B*T, C]->[B, T, C]
+        cls_logits = self.cls_head(x_v.mean(dim=1))
+        logits = self.head(x)
+        return self.unpad(logits, num_tokens_to_pad), cls_logits
 
 
 class VisualRWKV(pl.LightningModule):
@@ -385,11 +388,11 @@ class VisualRWKV(pl.LightningModule):
     def forward(self, samples):
         x, targets, masks = self.preparing_embedding(samples)
         # unidirectional forward
-        logits = self.rwkv(x, masks)
-        return logits, targets
+        logits, cls_logits = self.rwkv(x, masks)
+        return logits, targets, cls_logits, samples["cls_labels"]
     
     def training_step(self, batch, batch_idx):
-        logits, targets = self(batch)
+        logits, targets, cls_logits, cls_targets = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         # calculate valid length for each sample
@@ -404,6 +407,10 @@ class VisualRWKV(pl.LightningModule):
         # Average the loss by valid label length
         loss = loss.view(shift_labels.size()).sum(1) / valid_lengths # [B*T] -> [B, T] -> [B]
         loss = loss.mean() # average over batch
+        # calculate classification loss
+        if cls_logits is not None:
+            cls_loss = F.cross_entropy(cls_logits, cls_targets)
+            loss = loss + cls_loss
         return L2Wrap.apply(loss, logits)
     
     def training_step_end(self, batch_parts):

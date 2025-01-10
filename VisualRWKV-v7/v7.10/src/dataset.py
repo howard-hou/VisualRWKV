@@ -27,12 +27,16 @@ def multi_image_collate_fn(batch):
     input_ids = torch.stack([x['input_ids'] for x in batch])
     labels = torch.stack([x['labels'] for x in batch])
     sample_id = [str(x['sample_id']) for x in batch]
+    if batch[0]['cls_labels'] is not None:
+        cls_labels = torch.stack([torch.tensor(x['cls_labels']) for x in batch])
+    else:
+        cls_labels = None
     # concatenate images
     all_image = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
     # the num of images of each sample
     num_image_per_sample = [len(x['images']) for x in batch if 'images' in x]
     images = {"image": all_image, 'num_image_per_sample': num_image_per_sample}
-    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
+    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id, cls_labels=cls_labels)
 
 
 def process_image_tokens_in_conversations(
@@ -246,4 +250,5 @@ class MyDataset(Dataset):
 
         # add sample_id
         data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
+        data_dict['cls_labels'] = sample['class_id'] if 'class_id' in sample else None
         return data_dict
