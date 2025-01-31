@@ -21,12 +21,20 @@ def eval_single(annotation_file, result_file):
     pred_list = []
     for result in results:
         annotation = annotations[result['question_id']]
-        gt_answer = annotation['conversations'][-1]['value'].replace('The category is ', '').lower()
-        pred_answer = result['text'].replace('The category is ', '').lower()
-        pred_list.append({
-            "pred_answer": pred_answer,
-            "gt_answer": gt_answer,
-        })
+        if 'class_id' in annotation:
+            gt_answer = annotation['class_id']
+            pred_answer = int( result['text'])
+            pred_list.append({
+                "pred_answer": pred_answer,
+                "gt_answer": gt_answer,
+            })
+        else:
+            gt_answer = annotation['conversations'][-1]['value'].replace('The category is ', '').lower()
+            pred_answer = result['text'].replace('The category is ', '').lower()
+            pred_list.append({
+                "pred_answer": pred_answer,
+                "gt_answer": gt_answer,
+            })
 
     correct = 0
     for pred in pred_list:

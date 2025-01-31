@@ -261,6 +261,34 @@ class Block(nn.Module):
         x = x + torch.where(mask, self.ffn_v(self.ln_v(x)), self.ffn(self.ln2(x)))
         return x, v_first
 
+class VBlock(nn.Module):
+    def __init__(self, args, layer_id):
+        super().__init__()
+        self.args = args
+        self.layer_id = layer_id
+
+        if self.layer_id == 0:
+            self.ln0 = nn.LayerNorm(args.n_embd) # only used in block 0, should be fused with emb
+        self.ln1 = nn.LayerNorm(args.n_embd)
+        self.ln2 = nn.LayerNorm(args.n_embd)
+
+        self.att = RWKV_Tmix_x070(args, layer_id)
+        self.ffn = RWKV_CMix_x070(args, layer_id)
+        
+    def forward(self, x, v_first):
+        """
+        x: [B, T, C]
+        v_first: [B, T, C]
+        """
+        if self.layer_id == 0:
+            x = self.ln0(x)
+
+        xx, v_first = self.att(self.ln1(x), v_first)
+        x = x + xx
+        x = x + self.ffn(self.ln2(x))
+        return x, v_first
+    
+########################################################################################################
 
 class L2Wrap(torch.autograd.Function):
     @staticmethod
@@ -287,7 +315,6 @@ class RWKV(pl.LightningModule):
         self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
         self.ln_out = nn.LayerNorm(args.n_embd)
         self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
-        self.cls_head = nn.Linear(args.n_embd, 1000) # for imagenet classification
 
         if args.dropout > 0:
             self.drop0 = nn.Dropout(p = args.dropout)
@@ -332,10 +359,61 @@ class RWKV(pl.LightningModule):
                 x, v_first = block(x, mask, v_first)
 
         x = self.ln_out(x)
-        x_v = x[mask[:, :, 0]].view(x.size(0), -1, x.size(2)) #mask[:, :, 0]->[B*T, C]->[B, T, C]
-        cls_logits = self.cls_head(x_v.mean(dim=1))
         logits = self.head(x)
-        return self.unpad(logits, num_tokens_to_pad), cls_logits
+        return self.unpad(logits, num_tokens_to_pad)
+    
+
+
+class VRWKV(pl.LightningModule): 
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.emb = nn.Conv2d(3, args.n_embd, kernel_size=args.patch_size, stride=args.patch_size)
+        self.blocks = nn.ModuleList([VBlock(args, i) for i in range(6)])
+        self.ln_out = nn.LayerNorm(args.n_embd)
+        self.head = nn.Linear(args.n_embd, 1000) # for imagenet classification
+
+    def forward(self, x):
+        args = self.args
+        x = self.emb(x).flatten(2).transpose(1, 2) # [B, C, H, W] -> [B, T, C]
+
+        num_tokens_to_pad = (
+            CHUNK_LEN - x.size(1) % CHUNK_LEN if x.size(1) % CHUNK_LEN != 0 else 0
+        )
+        x = self.pad_left(x, num_tokens_to_pad)
+
+        v_first = torch.empty_like(x)
+        for block in self.blocks:
+            if args.grad_cp == 1:
+                x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
+            else:
+                x, v_first = block(x, v_first)
+
+        x = self.ln_out(x)
+        x = self.unpad(x, num_tokens_to_pad)
+        logits = self.head(x.mean(dim=1))
+        return x, logits
+    
+    def pad_left(self, x, num_tokens_to_pad):
+        # pad left with eos token embedding
+        if num_tokens_to_pad != 0:
+            # left padding by add eos token at the beginning
+            eos_idx = torch.full(
+                (x.size(0), num_tokens_to_pad),
+                STOP_TOKEN_INDEX,
+                dtype=torch.long,
+                device=x.device,
+            )
+            eos_emb = self.emb(eos_idx)
+            x = torch.cat((eos_emb, x), dim=1)
+        return x
+
+    def unpad(self, x, num_tokens_to_pad):
+        # unpad
+        if num_tokens_to_pad > 0:
+            x = x[:, num_tokens_to_pad:]
+        return x
+
 
 
 class VisualRWKV(pl.LightningModule):
@@ -343,7 +421,7 @@ class VisualRWKV(pl.LightningModule):
         super().__init__()
         self.args = args
         self.rwkv = RWKV(args)
-        self.patch_embed = nn.Conv2d(3, args.n_embd, kernel_size=args.patch_size, stride=args.patch_size)
+        self.vrwkv = VRWKV(args)
 
     def from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
@@ -358,6 +436,7 @@ class VisualRWKV(pl.LightningModule):
         return False
     
     def enable_pretrain_mode(self):
+        self.vrwkv.requires_grad_(True)
         self.rwkv.requires_grad_(False)
         for n, p in self.rwkv.named_parameters():
             if 'ffn_v' in n or 'ln_v' in n:
@@ -386,10 +465,10 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets, masks = self.preparing_embedding(samples)
+        x, targets, masks, image_cls_logits = self.preparing_embedding(samples)
         # unidirectional forward
-        logits, cls_logits = self.rwkv(x, masks)
-        return logits, targets, cls_logits, samples["cls_labels"]
+        logits = self.rwkv(x, masks)
+        return logits, targets, image_cls_logits, samples["cls_labels"]
     
     def training_step(self, batch, batch_idx):
         logits, targets, cls_logits, cls_targets = self(batch)
@@ -420,13 +499,14 @@ class VisualRWKV(pl.LightningModule):
                 self.trainer.my_loss_all = all
     
     def encode_images(self, images: dict) -> torch.Tensor:
-        return self.patch_embed(images['image']).flatten(2).transpose(1, 2)
+        image_features, image_cls_logits = self.vrwkv(images['image'])
+        return image_features, image_cls_logits
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
-        image_features  = self.encode_images(samples["images"])
+        image_features, image_cls_logits = self.encode_images(samples["images"])
         B_IMG, L_IMG, D_IMG = image_features.shape
         image_features = image_features.reshape(B_IMG*L_IMG, D_IMG)
         ### prepare input token
@@ -443,7 +523,7 @@ class VisualRWKV(pl.LightningModule):
             rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L).unsqueeze(-1)
+        return input_embeds.view(B, L, D), samples["labels"], selected.view(B, L).unsqueeze(-1), image_cls_logits
     
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
