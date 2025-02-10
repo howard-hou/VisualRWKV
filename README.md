@@ -1,6 +1,3 @@
-Here's a more polished and styled version of your markdown:
-
-```markdown
 # **VisualRWKV: A Visual Language Model Based on RWKV**
 <p align="center">
   <img src="./rwkv_emoji.png" alt="Logo" width="200">
