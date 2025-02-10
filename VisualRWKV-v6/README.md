@@ -12,25 +12,9 @@ VisualRWKV is a **visual language model** based on the RWKV language model, enab
 - **[Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence](https://arxiv.org/abs/2404.05892)**
 
 ## 🚀 News and Updates
-- **2025.02.10** 🔥 **VisualRWKV-7.0 released!** [[weights]](./MODEL_ZOO.md)
-- **2024.01.11** 🔥 **VisualRWKV-7.00 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v7/v7.00)
 - **2024.06.25** 🔥 **VisualRWKV-6.0 checkpoints released!** [[weights]](./MODEL_ZOO.md)
 - **2024.05.11** 🔥 **VisualRWKV-6.0 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
 - **2024.03.25** 🔥 **VisualRWKV-5.0 released!**
-
----
-
-## 📊 VisualRWKV v7.0 Metrics
-The following table presents the performance comparison between VisualRWKV v7.0 and its predecessor VisualRWKV v6 across several benchmark datasets.
-
-| Model Name         | VQA v2(test - dev) | ScienceQA(IMG) | TextVQA | GQA(acc) | Vision Encoder                              |
-|--------------------|--------------------|----------------|---------|----------|----------------------------------------------|
-| v0700+0b1          | 75.22              | 50.62          | 37.90   | 59.92    | SigLIP - 384+dinov2 - 384+Sam - b - 1024     |
-| v0700+0b4          | 77.85              | 54.98          | 41.05   | 62.30    | SigLIP - 384+dinov2 - 384+Sam - b - 1024     |
-| v0700+1b5          | 79.84              | 59.74          | 49.49   | 63.20    | SigLIP - 384+dinov2 - 384+Sam - b - 1024     |
-| VisualRWKV - v6 1.6B | 73.66 | 57.02 | 48.70 | 58.23 | SigLIP - 384+dinov2 - 384+Sam - b - 1024 | 
-| VisualRWKV - v6 3B | 71.52 | 65.34% | 48.68% | 59.56% | CLIP | 
-| VisualRWKV - v6 7B | 75.82 | 68.22% | 51.01% | 64.27% | CLIP |
 
 ---
 
@@ -47,10 +31,10 @@ VisualRWKV weights, checkpoints, and related results can be found in the [Model 
 ## 💻 Installation
 
 ### 1. Clone the repository
-Clone the repo and navigate to the VisualRWKV folder. Version 7.00 is the stable release.
+Clone the repo and navigate to the VisualRWKV folder. Version 6.0 is the stable release.
 ```bash
 git clone https://github.com/howard-hou/VisualRWKV.git
-cd VisualRWKV-v7/v7.00
+cd VisualRWKV-v6/v6.0
 ```
 
 ### 2. Install dependencies
@@ -65,7 +49,7 @@ pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/w
 pip install pytorch-lightning==1.9.5 deepspeed==0.7.0 wandb ninja
 
 # For best performance, use the following:
-pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu126
+pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu121
 pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
 ```
 
@@ -90,14 +74,27 @@ You can download the [LLaVA-Pretrain](https://huggingface.co/datasets/liuhaotian
 #### Download RWKV Checkpoints for Pre-training
 If you want to pretrain the model yourself, download the following RWKV checkpoints.
 
-| **VisualRWKV Version** | **RWKV 0B1** | **RWKV 0B4** | **RWKV 1B5** | **RWKV 3B** | **RWKV 7B** |
-| --- | --- | --- | --- |--- | --- |
-| **VisualRWKV-v6** | - | - | [RWKV-x060-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | [RWKV-x060-World-3B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth) | [RWKV-x060-World-7B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-7B-v2.1-20240507-ctx4096.pth) |
-| **VisualRWKV-v700** | [RWKV-x070-World-0B1](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth)  | [RWKV-x070-World-0B4](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth)  | [RWKV-x070-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | - | - |
+| **VisualRWKV Version** | **RWKV 1B6** | **RWKV 3B** | **RWKV 7B** |
+| --- | --- | --- | --- |
+| **VisualRWKV-v6** | [RWKV-x060-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | [RWKV-x060-World-3B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth) | [RWKV-x060-World-7B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-7B-v2.1-20240507-ctx4096.pth) |
 
 #### Pre-training Command
-To pretrain the VisualRWKV-v7.0 model (example for using 4 GPUs with a 1B5 RWKV model):
-please refer to [pretrain script](VisualRWKV-v7/v7.00/scripts/train/rwkv0b1_pretrain.sh)
+To pretrain the VisualRWKV-v6.0 model (example for using 4 GPUs with a 1B5 RWKV model):
+```bash
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+python train.py --load_model /path/to/rwkv/checkpoint \
+    --wandb "" --proj_dir path/to/output/ \
+    --data_file /path/to/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json \
+    --data_type "json" --vocab_size 65536 \
+    --ctx_len 1024 --epoch_steps 1000 --epoch_count 9 --epoch_begin 0 --epoch_save 0 \
+    --micro_bsz 16 --accumulate_grad_batches 2 --n_layer 24 --n_embd 2048 --pre_ffn 0 \
+    --lr_init 1e-3 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
+    --accelerator gpu --devices 4 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
+    --image_folder /path/to/LLaVA-Pretrain/images/ \
+    --vision_tower_name /path/to/openai/clip-vit-large-patch14-336 \
+    --freeze_rwkv 24 --detail low --grid_size -1 --image_position first \
+    --enable_progress_bar True
+```
 
 ---
 
@@ -107,4 +104,19 @@ please refer to [pretrain script](VisualRWKV-v7/v7.00/scripts/train/rwkv0b1_pret
 Refer to the [LLaVA](https://github.com/haotian-liu/LLaVA/blob/main/README.md) project for visual instruction data.
 
 #### Fine-tuning Command
-To fine-tune the VisualRWKV-v7.0 model, please refer to [fine-tune script](VisualRWKV-v7/v7.00/scripts/train/rwkv0b1_mix665k.sh)
+To fine-tune the VisualRWKV-v6.0 model (example for using 8 GPUs with a 1B5 RWKV model):
+```bash
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+python train.py --model_path path/to/pretrained-visualrwkv \
+    --wandb "" --proj_dir out/rwkv1b5-v060_mix665k \
+    --data_file /path/to/LLaVA-Instruct-150K/shuffled_llava_v1_5_mix665k.json \
+    --data_type "json" --vocab_size 65536 \
+    --ctx_len 2048 --epoch_steps 1000 --epoch_count 20 --epoch_begin 0 --epoch_save 5 \
+    --micro_bsz 8 --accumulate_grad_batches 2 --n_layer 24 --n_embd 2048 --pre_ffn 0 \
+    --lr_init 2e-5 --lr_final 2e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
+    --accelerator gpu --devices 8 --precision bf16 --strategy deepspeed_stage_1 --grad_cp 0 \
+    --image_folder /path/to/LLaVA-Instruct-150K/images/ \
+    --vision_tower_name /path/to/openai/clip-vit-large-patch14-336 \
+    --freeze_rwkv 0 --freeze_proj 0 --detail low --grid_size -1 --image_position middle \
+    --enable_progress_bar True
+```
