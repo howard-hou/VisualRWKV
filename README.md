@@ -93,7 +93,7 @@ If you want to pretrain the model yourself, download the following RWKV checkpoi
 | **VisualRWKV Version** | **RWKV 0B1** | **RWKV 0B4** | **RWKV 1B5** | **RWKV 3B** | **RWKV 7B** |
 | --- | --- | --- | --- |--- | --- |
 | **VisualRWKV-v6** | - | - | [RWKV-x060-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | [RWKV-x060-World-3B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth) | [RWKV-x060-World-7B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-7B-v2.1-20240507-ctx4096.pth) |
-| **VisualRWKV-v700** | [RWKV-x070-World-0B1](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth)  | [RWKV-x070-World-0B4](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth)  | [RWKV-x070-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | - | - |
+| **VisualRWKV-v700** | [RWKV-x070-World-0B1](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-0.1B-v2.8-20241210-ctx4096.pth)  | [RWKV-x070-World-0B4](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-0.4B-v2.9-20250107-ctx4096.pth)  | [RWKV-x070-World-1B5](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth) | - | - |
 
 #### Pre-training Command
 To pretrain the VisualRWKV-v7.0 model (example for using 4 GPUs with a 1B5 RWKV model):
