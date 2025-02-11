@@ -23,7 +23,7 @@ VisualRWKV is a **visual language model** based on the RWKV language model, enab
 ## 📊 VisualRWKV v7.0 Metrics
 The following table presents the performance comparison between VisualRWKV v7.0 and its predecessor VisualRWKV v6 across several benchmark datasets.
 
-| Model Name         | VQA v2(test - dev) | ScienceQA(IMG) | TextVQA | GQA(acc) | Vision Encoder                              |
+| Model Name         | VQAv2(test-dev) | ScienceQA(IMG) | TextVQA | GQA(acc) | Vision Encoder                              |
 |--------------------|--------------------|----------------|---------|----------|----------------------------------------------|
 | v0700+0b1          | 75.22              | 50.62          | 37.90   | 59.92    | SigLIP+dinov2+Sam |
 | v0700+0b4          | 77.85              | 54.98          | 41.05   | 62.30    | SigLIP+dinov2+Sam |
