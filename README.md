@@ -29,8 +29,8 @@ The following table presents the performance comparison between VisualRWKV v7.0 
 | v0700+0b4          | 77.85              | 54.98          | 41.05   | 62.30    | SigLIP - 384+dinov2 - 384+Sam - b - 1024     |
 | v0700+1b5          | 79.84              | 59.74          | 49.49   | 63.20    | SigLIP - 384+dinov2 - 384+Sam - b - 1024     |
 | VisualRWKV - v6 1.6B | 73.66 | 57.02 | 48.70 | 58.23 | SigLIP - 384+dinov2 - 384+Sam - b - 1024 | 
-| VisualRWKV - v6 3B | 71.52 | 65.34% | 48.68% | 59.56% | CLIP | 
-| VisualRWKV - v6 7B | 75.82 | 68.22% | 51.01% | 64.27% | CLIP |
+| VisualRWKV - v6 3B | 71.52 | 65.34 | 48.68 | 59.56 | CLIP | 
+| VisualRWKV - v6 7B | 75.82 | 68.22 | 51.01 | 64.27 | CLIP |
 
 ---
 
