@@ -12,7 +12,7 @@ VisualRWKV is a **visual language model** based on the RWKV language model, enab
 - **[Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence](https://arxiv.org/abs/2404.05892)**
 
 ## 🚀 News and Updates
-- **2025.02.10** 🔥 **VisualRWKV-7.00 released!** [[weights]](./MODEL_ZOO.md)
+- **2025.02.10** 🔥 **VisualRWKV-7.00 checkpoints released!** [[weights]](./MODEL_ZOO.md)
 - **2024.01.11** 🔥 **VisualRWKV-7.00 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v7/v7.00)
 - **2024.06.25** 🔥 **VisualRWKV-6.0 checkpoints released!** [[weights]](./MODEL_ZOO.md)
 - **2024.05.11** 🔥 **VisualRWKV-6.0 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
@@ -73,7 +73,7 @@ pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
 
 ## 📚 Pre-training and Fine-tuning
 
-**Latest stable version is VisualRWKV-v6/v6.0. Please navigate to the VisualRWKV-v6/v6.0 directory for running the code.**
+**Latest stable version is VisualRWKV-v7/v7.00. Please navigate to the VisualRWKV-v7/v7.00 directory for running the code.**
 
 VisualRWKV training consists of two stages:
 
