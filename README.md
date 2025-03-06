@@ -56,7 +56,7 @@ cd VisualRWKV-v7/v7.00
 ### 2. Install dependencies
 Create a conda environment and install the necessary packages.
 ```bash
-conda create -n llava python=3.10 -y
+conda create -n visualrwkv python=3.10 -y
 conda activate visualrwkv
 pip install --upgrade pip  # Enable PEP 660 support
 
