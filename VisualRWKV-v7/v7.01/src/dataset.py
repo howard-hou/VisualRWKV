@@ -201,7 +201,7 @@ class MyDataset(Dataset):
         if 'image' in sample:
             data_dict['images'] = image
         else:
-            crop_size = args.image_processor.crop_size
+            crop_size = args.image_processor.size
             data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
 
         # add sample_id
