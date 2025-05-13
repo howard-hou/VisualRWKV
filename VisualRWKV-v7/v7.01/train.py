@@ -58,8 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_path",type=str, help="Path to the vision tower checkpoint")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
-    parser.add_argument("--num_token_per_image", type=int, default=16)
-    parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument("--num_token_per_image", type=int, default=256)
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 
     parser = Trainer.add_argparse_args(parser)
@@ -192,7 +191,7 @@ if __name__ == "__main__":
 
     # init training data
     args.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
-    args.image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_path)
+    args.image_processor = AutoImageProcessor.from_pretrained(args.vision_tower_path, use_fast=True)
     train_data = MyDataset(args)
 
     trainer = Trainer.from_argparse_args(args, callbacks=[train_callback(args)])

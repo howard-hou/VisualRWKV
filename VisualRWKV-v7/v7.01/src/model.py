@@ -11,14 +11,13 @@ from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from transformers import Siglip2VisionModel
+from transformers import SiglipVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX
-from .vision import SamDinoSigLIPViTBackbone
 from .utils import compress_parameter_names
 
 def __nop(ob):
@@ -345,9 +344,12 @@ class VisualRWKV(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = Siglip2VisionModel.from_pretrained(args.vision_tower_path)
+        self.vit = SiglipVisionModel.from_pretrained(
+            args.vision_tower_path,
+            attn_implementation="sdpa",
+            )
         self.freeze_vit()
-        self.proj = MLPWithContextGating(self.vit.embed_dim, args.n_embd)
+        self.proj = MLPWithContextGating(self.vit.config.hidden_size, args.n_embd)
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
 
     def load_rwkv_from_pretrained(self, path):
