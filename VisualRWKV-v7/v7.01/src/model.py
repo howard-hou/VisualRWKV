@@ -353,7 +353,7 @@ class VisualRWKV(pl.LightningModule):
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
 
     def load_rwkv_from_pretrained(self, path):
-        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
         rank_zero_info(f"Loaded pretrained RWKV from {path}")
 
     @property
