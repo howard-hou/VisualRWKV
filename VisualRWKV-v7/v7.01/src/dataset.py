@@ -205,5 +205,5 @@ class MyDataset(Dataset):
             data_dict['images'] = torch.zeros(1, 3, crop_size['height'], crop_size['width'])
 
         # add sample_id
-        data_dict['sample_id'] = sample['sample_id'] if 'sample_id' in sample else sample['id']
+        data_dict['sample_id'] = str(sample['sample_id']) if 'sample_id' in sample else str(sample['id'])
         return data_dict
