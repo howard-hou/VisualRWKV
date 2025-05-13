@@ -52,14 +52,19 @@ def process_image_tokens_in_conversations(
 
 def process_tokens_in_conversations(
     conversations: Sequence[Dict],
+    add_dummy_image_token: bool = False
 ) -> Sequence[Dict]:
     """
     Process tokens within conversations.
     replace \n\n with \n
+    add 1 dummy image token at the beginning
     """
     for sentence in conversations:
-        sentence['value'] = sentence['value'].strip()
+        sentence['value'] = sentence['value'].strip().replace(DEFAULT_IMAGE_TOKEN, '')
         sentence['value'] = re.sub(r"\n(\s*\n)+", '\n', sentence['value'])
+
+    if add_dummy_image_token:
+        conversations[0]['value'] = DEFAULT_IMAGE_TOKEN + '\n' + conversations[0]['value']
 
     return conversations
 
@@ -120,7 +125,7 @@ def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
     return input_ids, targets
 
 
-def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image, pad_token_id=0, do_pad_to_max_length=True):
+def preprocess(conversations, tokenizer, ctx_len, num_token_per_image, pad_token_id=0, do_pad_to_max_length=True):
     """
     Given a list of sources, each is a conversation list. This transform:
     1. Add \n\n after each round;
@@ -134,10 +139,7 @@ def preprocess(conversations, tokenizer, has_image, ctx_len, num_token_per_image
     input_text = "".join([sentence["value"] for sentence in conversations])
     input_ids, tokenized_lens, speakers = [], [], []
     for conversation in conversations:
-        if has_image:
-            conv_ids = tokenize_with_image_token(conversation["value"], tokenizer, num_token_per_image)
-        else:
-            conv_ids = tokenizer.encode(conversation["value"])
+        conv_ids = tokenize_with_image_token(conversation["value"], tokenizer, num_token_per_image)
         input_ids.extend(conv_ids)
         tokenized_lens.append(len(conv_ids))
         speakers.append(conversation["from"])
@@ -187,12 +189,12 @@ class MyDataset(Dataset):
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   num_image_paths=1)
         else:
-            conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
+            conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
+                                                            add_dummy_image_token=True)
 
         data_dict = preprocess(
             conversations,
             self.tokenizer,
-            has_image=('image' in sample),
             ctx_len=args.ctx_len,
             num_token_per_image=args.num_token_per_image,
             pad_token_id=0)
