@@ -166,15 +166,25 @@ def load_data_file(data_file):
     return data
 
 
+def get_sample_idx_mapping_for_epoch(data_size, epoch_count=100):
+    ''' each epoch, we use the same data, but in different order '''
+    # set seed
+    np.random.seed(222)
+    sample_idx_mapping = {}
+    for epoch in range(epoch_count):
+        sample_idx_mapping[epoch] = np.random.permutation(data_size)
+    return sample_idx_mapping
+
+
 class MyDataset(Dataset):
     def __init__(self, args):
         self.args = args
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
         self.list_data_dict = load_data_file(args.data_file)
-        # shuffle the data, but deterministically
-        self.list_data_dict_reverse = [x for x in reversed(self.list_data_dict)]
         self.data_size = len(self.list_data_dict)
+        # shuffle the data, avoid overfitting
+        self.sample_idx_mapping = get_sample_idx_mapping_for_epoch(self.data_size)
         self.magic_prime = largest_3n_plus_2_prime(self.data_size)
         self.samples_per_epoch = self.args.epoch_steps * self.args.real_bsz
 
@@ -193,8 +203,10 @@ class MyDataset(Dataset):
         # normally, we don't train for more than 2 epoch
         if step < self.magic_prime: # first epoch
             sample = self.list_data_dict[sample_idx]
-        else: # when step >= self.magic_prime, means the second epoch
-            sample = self.list_data_dict_reverse[sample_idx]
+        else: # when step >= self.magic_prime, we use the shuffled data
+            real_epoch = step // self.magic_prime
+            real_sample_idx = self.sample_idx_mapping[real_epoch][sample_idx]
+            sample = self.list_data_dict[real_sample_idx]
 
         if 'image' in sample:
             image_folder = Path(args.image_folder)
