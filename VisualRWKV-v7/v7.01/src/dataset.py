@@ -163,6 +163,7 @@ def load_data_file(data_file):
             data = [json.loads(line) for line in f]
     else:
         raise ValueError(f"Unsupported file type: {data_file.suffix}")
+    return data
 
 
 class MyDataset(Dataset):
@@ -170,7 +171,7 @@ class MyDataset(Dataset):
         self.args = args
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
-        self.list_data_dict = load_data_file(args.data_file, "r")
+        self.list_data_dict = load_data_file(args.data_file)
         # shuffle the data, but deterministically
         self.list_data_dict_reverse = [x for x in reversed(self.list_data_dict)]
         self.data_size = len(self.list_data_dict)

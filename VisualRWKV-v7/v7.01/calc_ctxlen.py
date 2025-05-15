@@ -1,24 +1,11 @@
-from src.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import preprocess, IGNORE_INDEX, IMAGE_TOKEN_INDEX
+from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+from src.dataset import preprocess, IGNORE_INDEX, IMAGE_TOKEN_INDEX, load_data_file
 from src.dataset import process_image_tokens_in_conversations, process_tokens_in_conversations
 import argparse
 import json
 from tqdm import tqdm
 import numpy as np
 import copy
-
-
-def add_image_tokens(input_ids, labels, num_image_tokens):
-    # split input ids and labels into 3 parts
-    # first text part, second image part, third text part
-    image_index = input_ids.index(IMAGE_TOKEN_INDEX)
-    first_text_part = input_ids[:image_index]
-    second_text_part = input_ids[image_index + 1:]
-    first_text_labels = labels[:image_index]
-    second_text_labels = labels[image_index + 1:]
-    new_input_ids = first_text_part + [IMAGE_TOKEN_INDEX] * num_image_tokens + second_text_part
-    new_labels = first_text_labels + [IGNORE_INDEX] * num_image_tokens + second_text_labels
-    return new_input_ids, new_labels
 
 
 def truncate_labels(input_ids, labels, max_len):
@@ -31,8 +18,7 @@ def truncate_labels(input_ids, labels, max_len):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("data_file", type=str, default="data.json")
-    parser.add_argument("--image_position", type=str, default="first")
-    parser.add_argument("--image_tokens", type=int, default=None)
+    parser.add_argument("--num_token_per_image", type=int, default=256)
     parser.add_argument("--max_ctx_len", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--debug_mode", action="store_true")
@@ -43,35 +29,23 @@ if __name__ == "__main__":
     args = parse_args()
     if args.debug_mode:
         print("arguments:",args)
-    tokenizer = TRIE_TOKENIZER("src/rwkv_vocab_v20230424.txt")
-    data_list = json.load(open(args.data_file))
+    tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
+    data_list = load_data_file(args.data_file)
     ctx_lens, valid_label_lens, num_conv_rounds = [], [], []
     for data in tqdm(data_list):
-        if 'image' in data:
-            conversations = process_image_tokens_in_conversations(
-                copy.deepcopy(data["conversations"]), image_position=args.image_position)
-        else:
-            conversations = process_tokens_in_conversations(
+        conversations = process_tokens_in_conversations(
                 copy.deepcopy(data["conversations"]))
 
         data_dict = preprocess(
             conversations,
             tokenizer,
-            has_image=('image' in data),
             ctx_len=None,
             pad_token_id=0,
+            num_token_per_image=args.num_token_per_image,
             do_pad_to_max_length=False)
 
         data_dict["input_ids"] = data_dict["input_ids"].tolist()
         data_dict["labels"] = data_dict["labels"].tolist()
-        
-        if args.image_tokens is not None and "image" in data:
-            data_dict["input_ids"], data_dict["labels"] = add_image_tokens(
-                data_dict["input_ids"], data_dict["labels"], args.image_tokens)
-        if args.max_ctx_len is not None:
-            data_dict["input_ids"], data_dict["labels"] = truncate_labels(
-                data_dict["input_ids"], data_dict["labels"], args.max_ctx_len)
-        
         valid_labels = [l for l in data_dict["labels"] if l != IGNORE_INDEX]
         if args.debug_mode and len(valid_labels) == 0:
             debug_msg = dict(
