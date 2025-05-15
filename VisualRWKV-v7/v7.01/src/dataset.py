@@ -150,13 +150,27 @@ def preprocess(conversations, tokenizer, ctx_len, num_token_per_image, pad_token
         input_ids, targets = pad_to_max_len(input_ids, targets, ctx_len, pad_token_id)
     return dict(input_ids=input_ids, labels=targets, input_text=input_text)
 
+def load_data_file(data_file):
+    '''
+    use json to load if end with .json
+    '''
+    data_file = Path(data_file)
+    if data_file.suffix == '.json':
+        with open(data_file, 'r') as f:
+            data = json.load(f)
+    elif data_file.suffix == '.jsonl':
+        with open(data_file, 'r') as f:
+            data = [json.loads(line) for line in f]
+    else:
+        raise ValueError(f"Unsupported file type: {data_file.suffix}")
+
 
 class MyDataset(Dataset):
     def __init__(self, args):
         self.args = args
         self.vocab_size = args.vocab_size
         self.tokenizer = args.tokenizer
-        self.list_data_dict = json.load(open(args.data_file, "r"))
+        self.list_data_dict = load_data_file(args.data_file, "r")
         # shuffle the data, but deterministically
         self.list_data_dict_reverse = [x for x in reversed(self.list_data_dict)]
         self.data_size = len(self.list_data_dict)
