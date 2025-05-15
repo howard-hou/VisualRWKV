@@ -3,6 +3,7 @@
 ########################################################################################################
 
 import json, os, re, copy
+import numpy as np
 from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
