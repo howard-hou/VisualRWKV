@@ -394,10 +394,11 @@ class VisualRWKV(pl.LightningModule):
         # vtc -> visual token compressor
         # self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
         self.vtc = VisualTokenCompressor(args)
-        self.init_vtc_weight()
+        # self.init_vtc_weight() # call after loading visualrwkv
     
-    def init_vtc_weight(self):
+    def init_vtc_weights(self):
         # Copy weights from rwkv to vtc
+        self.vtc.ln_out.load_state_dict(self.rwkv.ln_out.state_dict())
         for i in range(self.args.n_vtc_layer):
             vtc_block = self.vtc.blocks[i]
             rwkv_block = self.rwkv.blocks[i]
@@ -497,21 +498,29 @@ class VisualRWKV(pl.LightningModule):
         return image_features
     
     def encode_images(self, images):
-        BN, C, H, W = images.shape
+        B, N, C, H, W = images.shape
+        images = images.view(B*N, C, H, W)
         image_features = self.vit(images).last_hidden_state
-        L, D = image_features.shape[1], image_features.shape[2]
+        _, L, D = image_features.shape
+        image_features = image_features.view(B, N, L, D)
         #image_features = self.adaptive_pooling(image_features)
         return self.proj(image_features)
     
-    def compress_visual_tokens(self, image_features):
-        # image_features: [BN, L, D]
-        # there are 3 ways: 
-        # image region: 1 image 1 region
-        # row region: 1 row 1 region, maybe good for text task
-        # block region: 1 4x4 block 1 region, maybe good for image task
-        image_features = self.vtc(image_features)
-        return image_features[:, -1:, :] # [BN, 1, D], only keep the last token
-  
+    def compress_visual_tokens(self, image_features, reduction='pool'):
+        # image_features: [B, NL, D]
+        B, N, L, D = image_features.shape
+        image_features = image_features.view(B, N*L, D) # global
+        image_features = self.vtc(image_features) # [B, N*L, D]
+        if reduction == 'step':
+            step = L // self.args.num_token_per_image
+            return image_features[:, ::step, :]
+        elif reduction == 'pool':
+            output_size = self.args.num_token_per_image * N
+            pool = nn.AdaptiveAvgPool1d(output_size)
+            image_features = image_features.permute(0, 2, 1) # [B, D, N*L]
+            image_features = pool(image_features) # [B, D, num_token_per_image*N]
+            return image_features.permute(0, 2, 1) # [B, num_token_per_image*N, D]
+
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
