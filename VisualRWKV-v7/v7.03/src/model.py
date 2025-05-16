@@ -356,12 +356,19 @@ class VisualTokenCompressor(nn.Module):
         x = self.pad_left(x, num_tokens_to_pad)
 
         v_first = torch.empty_like(x)
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
+            do_reverse = (i % 2 == 1)
+            if do_reverse: # reverse
+                x, v_first = x.flip(1), v_first.flip(1)
+
             if args.grad_cp == 1:
                 x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
             else:
                 x, v_first = block(x, v_first)
-
+            
+            if do_reverse: # reverse back
+                x, v_first = x.flip(1), v_first.flip(1)
+            
         x = self.ln_out(x)
         return self.unpad(x, num_tokens_to_pad)
 
@@ -515,8 +522,8 @@ class VisualRWKV(pl.LightningModule):
             step = L // self.args.num_token_per_image
             return image_features[:, ::step, :]
         elif reduction == 'pool':
-            output_size = self.args.num_token_per_image * N
-            pool = nn.AdaptiveAvgPool1d(output_size)
+            output_length = self.args.num_token_per_image * N
+            pool = nn.AdaptiveAvgPool1d(output_length)
             image_features = image_features.permute(0, 2, 1) # [B, D, N*L]
             image_features = pool(image_features) # [B, D, num_token_per_image*N]
             return image_features.permute(0, 2, 1) # [B, num_token_per_image*N, D]
