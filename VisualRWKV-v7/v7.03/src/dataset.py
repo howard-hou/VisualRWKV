@@ -28,7 +28,11 @@ def multi_image_collate_fn(batch):
     labels = torch.stack([x['labels'] for x in batch])
     sample_id = [str(x['sample_id']) for x in batch]
     # concatenate images
-    images = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
+    # old way: (BN, C, H, W)
+    # images = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
+    # new way: (B, N, C, H, W)
+    images = [x['images'].unsqueeze(0) for x in batch if 'images' in x]
+    images = torch.cat(images, dim=0)
     # the num of images of each sample
     # num_image_per_sample = [len(x['images']) for x in batch if 'images' in x]
     return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)

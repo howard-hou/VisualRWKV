@@ -59,7 +59,7 @@ def split_image_into_regions(image, n, m):
     return regions
 
 
-def select_best_resolution(original_size, region_size=(256, 256), criterion='smallest'):
+def select_best_resolution(original_size, region_size=(256, 256), criterion='closest'):
     """
     Selects the best resolution by minimizing both wasted area and criterion: smallest, or closest to original size.
 

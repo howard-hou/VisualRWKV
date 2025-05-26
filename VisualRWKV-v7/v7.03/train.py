@@ -184,6 +184,9 @@ if __name__ == "__main__":
         raw_model = torch.load(args.model_path, map_location='cpu', weights_only=True)
         msg = model.load_state_dict(raw_model, strict=False)
         rank_zero_info(f"loading visual rwkv model from {args.model_path}: {msg}")
+        if 'vtc.blocks.0.ln0.weight' in msg.missing_keys:
+            model.init_vtc_weights()
+            rank_zero_info("vtc blocks are initialized from rwkv blocks")
     if args.freeze_rwkv > 0:
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
