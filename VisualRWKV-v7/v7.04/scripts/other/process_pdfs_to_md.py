@@ -74,17 +74,21 @@ def main():
     parser.add_argument("output_dir", help="Directory to store Markdown output")
     parser.add_argument("--max-workers", type=int, default=1,
                         help="Maximum number of parallel workers (default: 1)")
-    parser.add_argument("--device", type=str, default="0", help="CUDA device ID to use (e.g., 0)")
+    parser.add_argument("--devices", type=str, default="0",
+                    help="Comma-separated list of CUDA device IDs (e.g., 0,1,2)")
 
     args = parser.parse_args()
 
     input_dir = args.input_dir
     output_dir = args.output_dir
-    max_workers = args.max_workers or cpu_count()
+    max_workers = args.max_workers
+    devices = args.devices.split(",")
+    num_devices = len(devices)
 
     os.makedirs(output_dir, exist_ok=True)
     pdf_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith(".pdf")]
-    tasks = [(pdf_path, output_dir, args.device) for pdf_path in pdf_files]
+    pdf_files = sorted(pdf_files)
+    tasks = [(pdf_path, output_dir, devices[i % num_devices]) for i, pdf_path in enumerate(pdf_files)]
 
     num_workers = min(max_workers, len(tasks))
     if num_workers <= 1:
@@ -92,6 +96,7 @@ def main():
         for task in tqdm(tasks, desc="Processing PDFs"):
             process_pdf(task)
         return
+        
     print(f"Running with {num_workers} parallel workers.")
     with Pool(processes=num_workers) as pool:
         for _ in tqdm(pool.imap_unordered(process_pdf, tasks), total=len(tasks), desc="Processing PDFs"):
