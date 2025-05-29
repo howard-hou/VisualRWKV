@@ -9,16 +9,18 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import pytorch_lightning as pl
+from typing import List
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from pytorch_lightning.strategies import DeepSpeedStrategy
 from transformers import SiglipVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
-
+from torch.nn.utils.rnn import pad_sequence
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX
 from .utils import compress_parameter_names
+from torch import Tensor
 
 def __nop(ob):
     return ob
@@ -475,83 +477,216 @@ class VisualRWKV(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         logits, targets = self(batch)
+        print(f"[training_step] logits shape: {logits.shape}, targets shape: {targets.shape}")
+
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
-        # calculate valid length for each sample
-        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1) # [B, T] -> [B]
-        # if valid length is 0, set it to 1, to avoid division by zero
+        print(f"[training_step] shift_logits shape: {shift_logits.shape}, shift_labels shape: {shift_labels.shape}")
+
+        valid_lengths = (shift_labels != IGNORE_INDEX).sum(1)  # [B]
+        print(f"[training_step] valid_lengths before max clamp: {valid_lengths}")
+
         valid_lengths = torch.max(valid_lengths, torch.ones_like(valid_lengths))
-        # calculate loss， loss of IGNORE_INDEX will be set to 0
-        loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)),
-                               shift_labels.view(-1),
-                               ignore_index=IGNORE_INDEX,
-                               reduction='none')
-        # Average the loss by valid label length
-        loss = loss.view(shift_labels.size()).sum(1) / valid_lengths # [B*T] -> [B, T] -> [B]
-        loss = loss.mean() # average over batch
+        print(f"[training_step] valid_lengths after max clamp: {valid_lengths}")
+
+        loss = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            ignore_index=IGNORE_INDEX,
+            reduction='none'
+        )
+        print(f"[training_step] raw loss shape (flattened): {loss.shape}")
+
+        loss = loss.view(shift_labels.size()).sum(1) / valid_lengths  # [B]
+        print(f"[training_step] per-sample averaged loss: {loss}")
+
+        loss = loss.mean()
+        print(f"[training_step] batch averaged loss: {loss.item()}")
+
         return L2Wrap.apply(loss, logits)
+
     
     def training_step_end(self, batch_parts):
         if pl.__version__[0] != '2':
             all = self.all_gather(batch_parts)
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
+    
+    # def encode_images(self, images):
+    #     # 如果 images 是 [B, N, C, H, W]，转换为 list，每个元素是 [N_i, C, H, W]
+    #     if isinstance(images, torch.Tensor) and images.ndim == 5:
+    #         images = [img for img in images]  # B 个 Tensor，每个是 [N_i, C, H, W]
 
-    def adaptive_pooling(self, image_features):
-        B, L, D = image_features.shape
-        H_or_W = int(L**0.5)
-        image_features = image_features.view(B, H_or_W, H_or_W, D).permute(0, 3, 1, 2)
-        image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
-        return image_features
-    
+    #     # 记录每个样本的 tile 数
+    #     tile_counts = [img.shape[0] for img in images]
+
+    #     # 拼接成一个大 batch
+    #     all_tiles = torch.cat(images, dim=0)
+
+    #     # 提取视觉特征
+    #     all_feats = self.vit(all_tiles).last_hidden_state  # [sum(N_i), L, D]
+
+    #     # 拆分每个样本
+    #     splits = torch.split(all_feats, tile_counts, dim=0)  # List[Tensor], 每个 [N_i, L, D]
+
+    #     # 展平成一个统一的序列 [N_i * L, D]
+    #     flattened_feats = [f.flatten(0, 1) for f in splits]  # List[[N_i * L, D]]
+
+    #     # 自定义右对齐 padding
+    #     max_len = max(f.shape[0] for f in flattened_feats)
+    #     D = flattened_feats[0].shape[1]
+    #     B = len(flattened_feats)
+    #     dtype = flattened_feats[0].dtype
+    #     device = flattened_feats[0].device
+
+    #     padded = torch.zeros((B, max_len, D), dtype=dtype, device=device)
+
+    #     for i, f in enumerate(flattened_feats):
+    #         seq_len = f.shape[0]
+    #         padded[i, -seq_len:, :] = f  # 右对齐，左边填0
+
+    #     return self.proj(padded)  # [B, L, D]
+
     def encode_images(self, images):
-        B, N, C, H, W = images.shape
-        images = images.view(B*N, C, H, W)
-        image_features = self.vit(images).last_hidden_state
-        _, L, D = image_features.shape
-        image_features = image_features.view(B, N, L, D)
-        #image_features = self.adaptive_pooling(image_features)
-        return self.proj(image_features)
-    
-    def compress_visual_tokens(self, image_features, reduction='pool'):
-        # image_features: [B, NL, D]
-        B, N, L, D = image_features.shape
-        image_features = image_features.view(B, N*L, D) # global
-        image_features = self.vtc(image_features) # [B, N*L, D]
-        if reduction == 'step':
-            step = L // self.args.num_token_per_image
-            return image_features[:, ::step, :]
-        elif reduction == 'pool':
-            output_length = self.args.num_token_per_image * N
-            pool = nn.AdaptiveAvgPool1d(output_length)
-            image_features = image_features.permute(0, 2, 1) # [B, D, N*L]
-            image_features = pool(image_features) # [B, D, num_token_per_image*N]
-            return image_features.permute(0, 2, 1) # [B, num_token_per_image*N, D]
+        # 如果 images 是 [B, N, C, H, W]，转换为 list，每个元素是 [N_i, C, H, W]
+        if isinstance(images, torch.Tensor) and images.ndim == 5:
+            images = [img for img in images]  # B 个 Tensor，每个是 [N_i, C, H, W]
+
+        # 记录每个样本的 tile 数
+        tile_counts =[img.shape[0] for img in images]
+
+        #拼接成一个大 batch
+        all_tiles=torch.cat(images, dim=0)
+
+        # 提取视觉特征
+        all_feats= self.vit(all_tiles).last_hidden_state #[sum(N i),l, D]
+
+        #拆分每个样本
+        splits =torch.split(all_feats,tile_counts,dim=0)#List[Tensor],每个[Ni,L, D]
+
+        # 展平成一个统一的序列[N i*L，D]
+        flattened_feats =[f.flatten(0, 1) for f in splits] # List[[N i* L, D]]
+
+        # 自定义右对齐 padding
+        max_len = max(f.shape[0] for f in flattened_feats)
+        D = flattened_feats[0].shape[1]
+        B = len(flattened_feats)
+        dtype = flattened_feats[0].dtype
+        device = flattened_feats[0].device
+
+        padded = torch.zeros((B, max_len, D), dtype=dtype, device=device)
+        for i, f in enumerate(flattened_feats):
+            seq_len = f.shape[0]
+            padded[i, -seq_len:, :] = f  # 右对齐，左边填0
+
+        print("all_feats shape:", all_feats.shape)
+        print("all_feats abs mean:", all_feats.abs().mean().item())
+        print("all_feats max:", all_feats.max().item())
+        return self.proj(padded)  # [B, L, D]
+
+    def adaptive_avg_pool1d_manual(self, input, output_size):
+        """
+        Manually implement 1D adaptive average pooling.
+        
+        Parameters:
+        - input: Tensor of shape (B, D, L)
+        - output_size: Desired output length
+        
+        Returns:
+        - Tensor of shape (B, D, output_size)
+        """
+        B, D, L = input.shape
+        kernel_size = L // output_size
+        output = input.unfold(2, kernel_size, kernel_size).mean(dim=-1)
+        return output
+
+    def compress_visual_tokens(self, image_features: torch.Tensor, per_sample_token_counts: List[int]) -> torch.Tensor:
+        """
+        image_features: [B, L, D] from encode_images()
+        per_sample_token_counts: List[int], 每个样本需要几个 token
+        return: [B, max(N_i), D] 右对齐
+        """
+        B, L, D = image_features.shape
+        print(f"[compress_visual_tokens] Input image_features shape: {image_features.shape}")
+        print(f"[compress_visual_tokens] per_sample_token_counts: {per_sample_token_counts}")
+
+        image_features = self.vtc(image_features)  # 线性映射或 LayerNorm 等
+        print(f"[compress_visual_tokens] After vtc transform, shape: {image_features.shape}")
+
+        output_feats = []
+        for i in range(B):
+            count = per_sample_token_counts[i]
+            print(f" Sample {i}: required tokens = {count}, available tokens = {L}")
+
+            if count <= L:
+                feat = image_features[i, -count:]  # 右对齐截取
+                print(f"  Using last {count} tokens, feat shape: {feat.shape}")
+            else:
+                pad_len = count - L
+                print(f"  Need padding: pad_len = {pad_len}")
+                pad = torch.zeros((pad_len, D), dtype=image_features.dtype, device=image_features.device)
+                feat = torch.cat([pad, image_features[i]], dim=0)  # 左 pad，右对齐
+                print(f"  After padding, feat shape: {feat.shape}")
+
+            output_feats.append(feat)
+
+        output = torch.stack(output_feats, dim=0)  # [B, N_i, D]
+        print(f"[compress_visual_tokens] Output stacked shape: {output.shape}")
+
+        return output
 
     def preparing_embedding(self, samples):
         if "images" not in samples:
+            print("[preparing_embedding] No images in samples, embedding input_ids only.")
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
-        ### prepare image features
-        image_features  = self.encode_images(samples["images"])
-        image_features = self.compress_visual_tokens(image_features)
-        B_IMG, L_IMG, D_IMG = image_features.shape
-        image_features = image_features.view(-1, D_IMG)
-        ### prepare input token
-        input_embeds = self.rwkv.emb(samples["input_ids"])
+
+        input_ids = samples["input_ids"]  # [B, L]
+        B, L = input_ids.shape
+        print(f"[preparing_embedding] input_ids shape: {input_ids.shape}")
+
+        # 统计每个样本 IMAGE_TOKEN_INDEX 数量
+        image_token_counts = (input_ids == IMAGE_TOKEN_INDEX).sum(dim=1).tolist()
+        print(f"[preparing_embedding] image_token_counts: {image_token_counts}")
+
+        # 提取图像特征
+        image_features = self.encode_images(samples["images"])  # [B, L_img, D]
+        print(f"[preparing_embedding] image_features shape after encode_images: {image_features.shape}")
+
+        image_features = self.compress_visual_tokens(image_features, image_token_counts)  # [B, N_i, D]
+        print(f"[preparing_embedding] image_features shape after compress_visual_tokens: {image_features.shape}")
+
+        # 平铺 input_embeds
+        input_embeds = self.rwkv.emb(input_ids)  # [B, L, D]
         B, L, D = input_embeds.shape
+        print(f"[preparing_embedding] input_embeds shape: {input_embeds.shape}")
         input_embeds = input_embeds.view(B * L, D)
-        input_ids = samples["input_ids"].view(B * L)
-        selected = (input_ids == IMAGE_TOKEN_INDEX)
-        selected_sum = selected.sum()
-        if selected_sum != B_IMG*L_IMG:
-            # truncate the image_features, wrong way to handle this, but it is fine for now
-            image_features = image_features[:selected_sum]
-            sample_id = ':::'.join(samples["sample_id"])
-            rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
-        # fill the image features to the input_embeds
-        input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"]
-    
+        flat_ids = input_ids.view(B * L)
+
+        # 找出所有 image_token 的位置
+        selected = (flat_ids == IMAGE_TOKEN_INDEX)
+        n_selected = selected.sum().item()
+        print(f"[preparing_embedding] Number of IMAGE_TOKEN_INDEX in input_ids: {n_selected}")
+
+        # 展平成 image_features，拼接填入 input_embeds 中
+        image_features_flat = image_features.view(-1, D)
+        print(f"[preparing_embedding] Flattened image_features shape: {image_features_flat.shape}")
+
+        if image_features_flat.shape[0] != n_selected:
+            sample_id = ':::'.join(samples.get("sample_id", ["unknown"]))
+            print(f"\n[preparing_embedding] WARNING: sample_id: {sample_id}, "
+                f"image token count = {n_selected}, but image features = {image_features_flat.shape[0]}. Will truncate to min(n).\n")
+            min_len = min(n_selected, image_features_flat.shape[0])
+            image_features_flat = image_features_flat[:min_len]
+            selected_indices = selected.nonzero(as_tuple=True)[0][:min_len]
+            input_embeds[selected_indices] = image_features_flat
+        else:
+            input_embeds[selected] = image_features_flat
+
+        result = input_embeds.view(B, L, D)
+        print(f"[preparing_embedding] Final embedding shape: {result.shape}")
+
+        return result, samples["labels"]
+
     def generate(self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx) -> list[int]:
         ''' one mode to generate, only generate one sample at a time
         # input_ids: [1, seq_len]
