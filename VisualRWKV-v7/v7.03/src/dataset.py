@@ -27,15 +27,24 @@ def multi_image_collate_fn(batch):
     input_ids = torch.stack([x['input_ids'] for x in batch])
     labels = torch.stack([x['labels'] for x in batch])
     sample_id = [str(x['sample_id']) for x in batch]
-    # concatenate images
-    # old way: (BN, C, H, W)
-    # images = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
-    # new way: (B, N, C, H, W)
-    images = [x['images'].unsqueeze(0) for x in batch if 'images' in x]
-    images = torch.cat(images, dim=0)
-    # the num of images of each sample
-    # num_image_per_sample = [len(x['images']) for x in batch if 'images' in x]
-    return dict(input_text=input_text, input_ids=input_ids, labels=labels, images=images, sample_id=sample_id)
+
+    # 每个样本的图像列表（支持每个样本 N_i 不同）
+    images = [x['images'] for x in batch if 'images' in x]
+
+    # 计算每个样本的 tile 数
+    tile_counts = [img.shape[0] for img in images]  # img: Tensor[N_i, C, H, W]
+
+    # 打印 tile 数调试信息
+    print(f"[multi_image_collate_fn] tile_counts: {tile_counts}")
+
+    return dict(
+        input_text=input_text,
+        input_ids=input_ids,
+        labels=labels,
+        images=images,               # List[Tensor[N_i, C, H, W]]
+        tile_counts=tile_counts,     # List[int]
+        sample_id=sample_id
+    )
 
 
 def process_image_tokens_in_conversations(
