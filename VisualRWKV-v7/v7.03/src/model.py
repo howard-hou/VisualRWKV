@@ -512,41 +512,6 @@ class VisualRWKV(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
     
-    # def encode_images(self, images):
-    #     # 如果 images 是 [B, N, C, H, W]，转换为 list，每个元素是 [N_i, C, H, W]
-    #     if isinstance(images, torch.Tensor) and images.ndim == 5:
-    #         images = [img for img in images]  # B 个 Tensor，每个是 [N_i, C, H, W]
-
-    #     # 记录每个样本的 tile 数
-    #     tile_counts = [img.shape[0] for img in images]
-
-    #     # 拼接成一个大 batch
-    #     all_tiles = torch.cat(images, dim=0)
-
-    #     # 提取视觉特征
-    #     all_feats = self.vit(all_tiles).last_hidden_state  # [sum(N_i), L, D]
-
-    #     # 拆分每个样本
-    #     splits = torch.split(all_feats, tile_counts, dim=0)  # List[Tensor], 每个 [N_i, L, D]
-
-    #     # 展平成一个统一的序列 [N_i * L, D]
-    #     flattened_feats = [f.flatten(0, 1) for f in splits]  # List[[N_i * L, D]]
-
-    #     # 自定义右对齐 padding
-    #     max_len = max(f.shape[0] for f in flattened_feats)
-    #     D = flattened_feats[0].shape[1]
-    #     B = len(flattened_feats)
-    #     dtype = flattened_feats[0].dtype
-    #     device = flattened_feats[0].device
-
-    #     padded = torch.zeros((B, max_len, D), dtype=dtype, device=device)
-
-    #     for i, f in enumerate(flattened_feats):
-    #         seq_len = f.shape[0]
-    #         padded[i, -seq_len:, :] = f  # 右对齐，左边填0
-
-    #     return self.proj(padded)  # [B, L, D]
-
     def encode_images(self, images):
         # 如果 images 是 [B, N, C, H, W]，转换为 list，每个元素是 [N_i, C, H, W]
         if isinstance(images, torch.Tensor) and images.ndim == 5:
@@ -559,7 +524,7 @@ class VisualRWKV(pl.LightningModule):
         all_tiles=torch.cat(images, dim=0)
 
         # 提取视觉特征
-        all_feats= self.vit(all_tiles).last_hidden_state #[sum(N i),l, D]
+        all_feats= self.vit(all_tiles).last_hidden_state #[sum(Ni),l, D]
 
         #拆分每个样本
         splits =torch.split(all_feats,tile_counts,dim=0)#List[Tensor],每个[Ni,L, D]
@@ -603,37 +568,61 @@ class VisualRWKV(pl.LightningModule):
     def compress_visual_tokens(self, image_features: torch.Tensor, per_sample_token_counts: List[int]) -> torch.Tensor:
         """
         image_features: [B, L, D] from encode_images()
-        per_sample_token_counts: List[int], 每个样本需要几个 token
-        return: [B, max(N_i), D] 右对齐
+        per_sample_token_counts: List[int], 每个样本原始请求的 token 数
+        return: [B, max(N_i), D] 右对齐 + 限制 max_visual_tokens
         """
         B, L, D = image_features.shape
+        max_visual_tokens = 512  # 你可以调整为 512 / 1536 等
+
         print(f"[compress_visual_tokens] Input image_features shape: {image_features.shape}")
         print(f"[compress_visual_tokens] per_sample_token_counts: {per_sample_token_counts}")
 
-        image_features = self.vtc(image_features)  # 线性映射或 LayerNorm 等
+        image_features = self.vtc(image_features)  # 映射后，仍是 [B, L, D]
         print(f"[compress_visual_tokens] After vtc transform, shape: {image_features.shape}")
 
         output_feats = []
         for i in range(B):
-            count = per_sample_token_counts[i]
-            print(f" Sample {i}: required tokens = {count}, available tokens = {L}")
+            count = min(per_sample_token_counts[i], max_visual_tokens)
+            count = min(count, L)  # 避免越界
+            print(f" Sample {i}: required tokens = {per_sample_token_counts[i]}, capped tokens = {count}, available = {L}")
 
-            if count <= L:
-                feat = image_features[i, -count:]  # 右对齐截取
-                print(f"  Using last {count} tokens, feat shape: {feat.shape}")
-            else:
-                pad_len = count - L
-                print(f"  Need padding: pad_len = {pad_len}")
+            feat = image_features[i, -count:]  # 默认保留最后 `count` 个 token
+            print(f"  Using last {count} tokens, feat shape: {feat.shape}")
+
+            if count < max_visual_tokens:
+                pad_len = max_visual_tokens - count
                 pad = torch.zeros((pad_len, D), dtype=image_features.dtype, device=image_features.device)
-                feat = torch.cat([pad, image_features[i]], dim=0)  # 左 pad，右对齐
+                feat = torch.cat([pad, feat], dim=0)  # 左 pad，右对齐
                 print(f"  After padding, feat shape: {feat.shape}")
 
             output_feats.append(feat)
 
-        output = torch.stack(output_feats, dim=0)  # [B, N_i, D]
+        output = torch.stack(output_feats, dim=0)  # [B, max_visual_tokens, D]
         print(f"[compress_visual_tokens] Output stacked shape: {output.shape}")
-
         return output
+
+    # def compress_visual_tokens(self, image_features, reduction='pool'):
+    #     """
+    #     image_features: Tensor, [B, L, D]，来自 encode_images() 输出
+    #     return: [B, T, D]，压缩后的视觉 token，T 由 args.num_token_per_image 决定
+    #     """
+    #     B, L, D = image_features.shape
+    #     image_features = self.vtc(image_features)  # 可选的 token-level 投影层
+
+    #     target_len = self.args.num_token_per_image
+
+    #     if reduction == 'step':
+    #         step = max(1, L // target_len)
+    #         return image_features[:, ::step, :][:, :target_len, :]  # 截断超出的部分
+
+    #     elif reduction == 'pool':
+    #         x = image_features.permute(0, 2, 1)  # [B, D, L]
+    #         x = self.adaptive_avg_pool1d_manual(x, target_len)
+    #         return x.permute(0, 2, 1)  # [B, T, D]
+
+    #     else:
+    #         raise ValueError(f"Unknown reduction type: {reduction}")
+
 
     def preparing_embedding(self, samples):
         if "images" not in samples:
