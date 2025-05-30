@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_path",type=str, help="Path to the vision tower checkpoint")
     parser.add_argument("--freeze_rwkv", default=0, type=int)  # layers to freeze
     parser.add_argument("--freeze_proj", default=0, type=int)  # freeze proj layer
-    parser.add_argument("--num_token_per_image", type=int, default=256)
+    parser.add_argument("--num_token_per_image", type=int, default=1024) # target len for visual tokens
     parser.add_argument("--n_vtc_layer", default=3, type=int)  # number of layers in the visual token compressor
     parser.add_argument("--print_param_shape", default=0, type=int)  # print param shape
 

@@ -35,7 +35,7 @@ def multi_image_collate_fn(batch):
     tile_counts = [img.shape[0] for img in images]  # img: Tensor[N_i, C, H, W]
 
     # 打印 tile 数调试信息
-    print(f"[multi_image_collate_fn] tile_counts: {tile_counts}")
+    #print(f"[multi_image_collate_fn] tile_counts: {tile_counts}")
 
     return dict(
         input_text=input_text,
@@ -234,7 +234,7 @@ class MyDataset(Dataset):
             images = args.image_processor.preprocess(regions, return_tensors='pt')['pixel_values']
             # 
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
-                                                                  num_regions=len(regions))
+                                                                  num_regions=1)
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
 
