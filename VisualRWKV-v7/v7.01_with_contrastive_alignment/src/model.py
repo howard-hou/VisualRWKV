@@ -439,14 +439,16 @@ class VisualRWKV(pl.LightningModule):
         return L2Wrap.apply(loss, logits) + ca_loss
     
     def compute_in_batch_contrastive_loss(self, text_embeds, vision_features):
-        # Calculate pairwise similarity
-        t2v_matrix = text_embeds @ vision_features.T / self.temperature # [N, N]
-        v2t_matrix = vision_features @ text_embeds.T / self.temperature # [N, N]
-        # Calculate the loss
-        labels = torch.arange(text_embeds.shape[0], device=text_embeds.device)
-        t2v_loss = F.cross_entropy(t2v_matrix, labels, label_smoothing=0.1)
-        v2t_loss = F.cross_entropy(v2t_matrix, labels, label_smoothing=0.1)
-        return (t2v_loss + v2t_loss) / 2
+        # normalize embeddings
+        text = F.normalize(text_embeds, dim=-1)
+        vision = F.normalize(vision_features, dim=-1)
+        # calculate pairwise similarity
+        t2v = (text @ vision.T) / self.temperature
+        v2t = (vision @ text.T) / self.temperature
+        # calculate contrastive loss
+        labels = torch.arange(text.shape[0], device=text.device)
+        loss = (F.cross_entropy(t2v, labels) + F.cross_entropy(v2t, labels)) / 2
+        return loss
     
     def training_step_end(self, batch_parts):
         if pl.__version__[0] != '2':

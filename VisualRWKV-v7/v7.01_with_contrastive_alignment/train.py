@@ -187,7 +187,7 @@ if __name__ == "__main__":
         model.freeze_rwkv(args.freeze_rwkv)
     if args.freeze_proj > 0:
         model.freeze_proj()
-    model.freeze_emb() # freeze emb all the time
+    # model.freeze_emb() # freeze emb all the time
 
     # init training data
     args.tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
