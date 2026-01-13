@@ -20,7 +20,6 @@ IMAGE_TOKEN_INDEX = 65533 # shift from -200 to 65534
 IMAGE_EOS_TOKEN_INDEX = 65534
 EOS_TOKEN_INDEX = 65535
 DEFAULT_IMAGE_TOKEN = "<image>"
-IMAGE_EOS_TOKEN = "<image_eos>"
 STOP_TOKEN_INDEX = 261
 DEFAULT_STOP_TOKEN = "\n\n"
 
@@ -91,12 +90,22 @@ def _add_speaker_and_signal(conversations):
     return conversations
 
 
-def tokenize_with_image_token(prompt, tokenizer, num_token_per_image, image_token_index=IMAGE_TOKEN_INDEX):
-    prompt_chunks = [tokenizer.encode(chunk) for chunk in prompt.split(DEFAULT_IMAGE_TOKEN)]
+def tokenize_with_image_token(conversation, tokenizer, num_token_per_image):
+    '''
+    only consider case: <image>\ntext... and text
+    '''
+    if DEFAULT_IMAGE_TOKEN not in conversation:
+        input_ids = tokenizer.encode(conversation)
+        if input_ids and input_ids[-1] != EOS_TOKEN_INDEX:
+            input_ids.append(EOS_TOKEN_INDEX)
+        return input_ids
 
-    input_ids = prompt_chunks[0]
-    for chunk in prompt_chunks[1:]:
-        input_ids.extend([image_token_index]*num_token_per_image)
+    conversation_chunks = [tokenizer.encode(chunk) for chunk in conversation.split(DEFAULT_IMAGE_TOKEN)]
+
+    input_ids = conversation_chunks[0] # input_ids should be empty
+    for chunk in conversation_chunks[1:]:
+        input_ids.extend([IMAGE_TOKEN_INDEX]*num_token_per_image)
+        input_ids.append(IMAGE_EOS_TOKEN_INDEX)
         input_ids.extend(chunk)
 
     return input_ids

@@ -17,7 +17,7 @@ if importlib.util.find_spec('deepspeed'):
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 # from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
-from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX
+from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX, EOS_TOKEN_INDEX, IMAGE_EOS_TOKEN_INDEX
 from .utils import compress_parameter_names
 
 def __nop(ob):
@@ -320,8 +320,9 @@ class RWKV(pl.LightningModule):
                 x, v_first = block(x, v_first)
 
         x = self.ln_out(x)
-        x = self.head(x)
-        return self.unpad(x, num_tokens_to_pad)
+        logits = self.head(x)
+        logits = self.unpad(logits, num_tokens_to_pad)
+        return logits, x
 
 
 class MLPWithContextGating(nn.Module):
@@ -351,10 +352,7 @@ class VisualRWKV(pl.LightningModule):
         self.freeze_vit()
         self.proj = MLPWithContextGating(self.vit.config.hidden_size, args.n_embd)
         self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
-        self.align = ContrastiveAlignment(self.proj, args.queue_size, 
-                                    args.ctx_len, args.vision_ctx_len, 
-                                    args.n_embd, self.vit.config.hidden_size,
-                                    reduction=args.constraive_reduction)
+        self.temperature = 0.07
 
     def load_rwkv_from_pretrained(self, path):
         self.rwkv.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=False)
@@ -413,13 +411,15 @@ class VisualRWKV(pl.LightningModule):
         return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=True, amsgrad=False)
 
     def forward(self, samples):
-        x, targets = self.preparing_embedding(samples)
+        x, targets, text_eos_mask, image_eos_mask = self.preparing_embedding(samples)
         # unidirectional forward
-        logits = self.rwkv(x)
-        return logits, targets
+        logits, features = self.rwkv(x)
+        text_eos_features = features[text_eos_mask]
+        image_eos_features = features[image_eos_mask]
+        return logits, targets, text_eos_features, image_eos_features
     
     def training_step(self, batch, batch_idx):
-        logits, targets = self(batch)
+        logits, targets, text_eos_features, image_eos_features = self(batch)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = targets[..., 1:].contiguous()
         # calculate valid length for each sample
@@ -434,7 +434,19 @@ class VisualRWKV(pl.LightningModule):
         # Average the loss by valid label length
         loss = loss.view(shift_labels.size()).sum(1) / valid_lengths # [B*T] -> [B, T] -> [B]
         loss = loss.mean() # average over batch
-        return L2Wrap.apply(loss, logits)
+        # include contrastive alignment loss
+        ca_loss = self.compute_in_batch_contrastive_loss(text_eos_features, image_eos_features)
+        return L2Wrap.apply(loss, logits) + ca_loss
+    
+    def compute_in_batch_contrastive_loss(self, text_embeds, vision_features):
+        # Calculate pairwise similarity
+        t2v_matrix = text_embeds @ vision_features.T / self.temperature # [N, N]
+        v2t_matrix = vision_features @ text_embeds.T / self.temperature # [N, N]
+        # Calculate the loss
+        labels = torch.arange(text_embeds.shape[0], device=text_embeds.device)
+        t2v_loss = F.cross_entropy(t2v_matrix, labels, label_smoothing=0.1)
+        v2t_loss = F.cross_entropy(v2t_matrix, labels, label_smoothing=0.1)
+        return (t2v_loss + v2t_loss) / 2
     
     def training_step_end(self, batch_parts):
         if pl.__version__[0] != '2':
@@ -461,7 +473,7 @@ class VisualRWKV(pl.LightningModule):
    
     def preparing_embedding(self, samples):
         if "images" not in samples:
-            return self.rwkv.emb(samples["input_ids"]), samples["labels"]
+            raise NotImplementedError("Images are required for Contrastive Alignment")
         ### prepare image features
         image_features  = self.encode_images(samples["images"])
         B_IMG, L_IMG, D_IMG = image_features.shape
@@ -470,104 +482,11 @@ class VisualRWKV(pl.LightningModule):
         input_embeds = self.rwkv.emb(samples["input_ids"])
         B, L, D = input_embeds.shape
         input_embeds = input_embeds.view(B * L, D)
-        input_ids = samples["input_ids"].view(B * L)
+        input_ids = samples["input_ids"].reshape(B * L) # [B*L]
         selected = (input_ids == IMAGE_TOKEN_INDEX)
-        selected_sum = selected.sum()
-        if selected_sum != B_IMG*L_IMG:
-            # truncate the image_features, wrong way to handle this, but it is fine for now
-            image_features = image_features[:selected_sum]
-            sample_id = ':::'.join(samples["sample_id"])
-            rank_zero_warn(f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG*L_IMG}\n")
         # fill the image features to the input_embeds
         input_embeds[selected] = image_features
-        return input_embeds.view(B, L, D), samples["labels"]
-
-
-########################################################################################################
-# The constraive alignment module for VisualRWKV
-########################################################################################################
-class ContrastiveAlignment(nn.Module):
-    def __init__(self, proj, queue_size, text_max_len, vision_max_len, text_embed_dim, vision_embed_dim, reduction='mean'):
-        super().__init__()
-        self.proj = proj
-        self.queue_size = queue_size
-        self.text_max_len = text_max_len
-        self.vision_max_len = vision_max_len
-        self.text_embed_dim = text_embed_dim
-        self.vision_embed_dim = vision_embed_dim
-        self.reduction = reduction
-        self.register_buffer("text_queue", torch.zeros(queue_size, text_max_len, text_embed_dim))
-        self.register_buffer("vision_queue", torch.zeros(queue_size, vision_max_len, vision_embed_dim))
-        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-
-    def pool_features(self, text_embeds, vision_features, text_masks=None):
-        if text_masks is None:
-            text_masks = torch.ones_like(text_embeds[..., 0], dtype=torch.bool)
-        if self.reduction == 'mean':
-            vision_pooled_features = vision_features.mean(dim=1)
-            text_pooled_embeds = text_embeds.sum(dim=1) / text_masks.sum(dim=-1, keepdim=True)
-        elif self.reduction == 'weighted':
-            text2vision_similarities = torch.einsum('ntd,nvd->ntv', text_embeds, vision_features)
-            # mask out padding tokens
-            text_embeds_weights = text2vision_similarities.mean(dim=-1) + (~text_masks) * (-1e9)
-            text_embeds_weights = torch.softmax(text2vision_similarities.mean(dim=-1), dim=-1) # [N, T]
-            text_pooled_embeds = torch.einsum('ntd,nt->nd', text_embeds, text_embeds_weights)
-            vision_features_weights = torch.softmax(text2vision_similarities.mean(dim=-2), dim=-1) # [N, V]
-            vision_pooled_features = torch.einsum('nvd,nv->nd', vision_features, vision_features_weights)
-        else:
-            raise ValueError(f"Unknown reduction: {self.reduction}")
-        return text_pooled_embeds, vision_pooled_features
-
-    def compute_in_batch_constraive_loss(self, text_embeds, vision_features, text_masks):
-        # first pool the vision features and text embeds
-        text_pooled_embeds, vision_pooled_features = self.pool_features(text_embeds, vision_features, text_masks)
-        # Calculate pairwise similarity
-        t2v_matrix = text_pooled_embeds @ vision_pooled_features.T # [N, N]
-        v2t_matrix = vision_pooled_features @ text_pooled_embeds.T # [N, N]
-        # Calculate the loss
-        labels = torch.arange(text_embeds.shape[0], device=text_embeds.device)
-        t2v_loss = F.cross_entropy(t2v_matrix, labels, label_smoothing=0.1)
-        v2t_loss = F.cross_entropy(v2t_matrix, labels, label_smoothing=0.1)
-        return (t2v_loss + v2t_loss) / 2
-    
-    def compute_in_queue_constraive_loss(self, text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features):
-        # first pool the vision features and text embeds
-        text_pooled_embeds, vision_pooled_features = self.pool_features(text_embeds, vision_features, text_masks)
-        text_neg_pooled_embeds, vision_neg_pooled_features = self.pool_features(text_neg_embeds, vision_neg_features, text_masks=None)
-        # Calculate pos logits
-        pos_logits = torch.einsum('nd,nd->n', text_pooled_embeds, vision_pooled_features)
-        # Calculate neg logits
-        neg_text_logits = torch.einsum('nd,kd->nk', text_pooled_embeds, vision_neg_pooled_features)
-        neg_vision_logits = torch.einsum('nd,kd->nk', vision_pooled_features, text_neg_pooled_embeds)
-        # Calculate the loss
-        # logits: [batch_size, 1+K+K]
-        logits = torch.cat((pos_logits.unsqueeze(-1), neg_text_logits, neg_vision_logits), dim=-1)
-        # labels: positive key indicators, which is 0
-        labels = torch.zeros(text_embeds.shape[0], dtype=torch.long, device=text_embeds.device)
-        # compute constraive loss
-        loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
-        return loss
-
-    def forward(self, text_embeds, vision_embeds, text_masks):
-        # text_embeds: [batch_size, text_max_len, embed_dim]
-        # vision_embeds: [batch_size, vision_max_len, embed_dim]
-        batch_size = text_embeds.shape[0]
-        # project to the same space
-        vision_features = self.proj(vision_embeds)
-        vision_neg_embeds = self.vision_queue.clone().detach()
-        vision_neg_features = self.proj(vision_neg_embeds)
-        # apply mask, make padding tokens zero
-        text_embeds = text_embeds * text_masks.unsqueeze(-1)
-        text_neg_embeds = self.text_queue.clone().detach()
-        # compute loss, when batch_size == 1, only compute in_queue loss
-        if batch_size != 1:
-            in_batch_loss = self.compute_in_batch_constraive_loss(text_embeds, vision_features, text_masks)
-            in_queue_loss = self.compute_in_queue_constraive_loss(text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features)
-            loss = in_batch_loss + in_queue_loss
-        else:
-            loss = self.compute_in_queue_constraive_loss(text_embeds, vision_features, text_masks, text_neg_embeds, vision_neg_features)
-        # update queue
-        self.text_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = text_embeds
-        self.vision_queue[self.queue_ptr:self.queue_ptr+batch_size, :] = vision_embeds
-        self.queue_ptr = (self.queue_ptr + batch_size) % self.queue_size
-        return loss
+        # eos mask
+        text_eos_mask = (samples["input_ids"] == EOS_TOKEN_INDEX)
+        image_eos_mask = (samples["input_ids"] == IMAGE_EOS_TOKEN_INDEX)
+        return input_embeds.view(B, L, D), samples["labels"], text_eos_mask, image_eos_mask
